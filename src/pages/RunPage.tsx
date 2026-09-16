@@ -1,56 +1,9 @@
-import type { EChartsOption } from "echarts";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { EChart } from "../components/EChart";
+import { ResourcesCard } from "../components/ResourcesCard";
 import { ScopeChips } from "../components/ScopeChips";
 import { getManifest, type RunManifest, type StormRec } from "../lib/data";
-import { chartTheme } from "../lib/palette";
 import { PROJECT_VIEWS } from "../projects";
-
-const RUNTIME_BINS = [
-  { label: "<1 min", max: 60 },
-  { label: "1–5 min", max: 300 },
-  { label: "5–15 min", max: 900 },
-  { label: "15–60 min", max: 3600 },
-  { label: "1–3 h", max: 10800 },
-  { label: ">3 h", max: Infinity },
-];
-
-function runtimeHistogram(storms: StormRec[]): EChartsOption {
-  const t = chartTheme();
-  const counts = RUNTIME_BINS.map(() => 0);
-  for (const s of storms) {
-    const rt = s.runtime_seconds;
-    if (rt == null) continue;
-    counts[RUNTIME_BINS.findIndex((b) => rt < b.max)]++;
-  }
-  return {
-    backgroundColor: "transparent",
-    grid: { left: 44, right: 12, top: 18, bottom: 28 },
-    tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
-    xAxis: {
-      type: "category",
-      data: RUNTIME_BINS.map((b) => b.label),
-      axisLine: { lineStyle: { color: t.baseline } },
-      axisTick: { show: false },
-      axisLabel: { color: t.textMuted, fontSize: 11 },
-    },
-    yAxis: {
-      type: "value",
-      splitLine: { lineStyle: { color: t.grid } },
-      axisLabel: { color: t.textMuted, fontSize: 11 },
-    },
-    series: [
-      {
-        type: "bar",
-        data: counts,
-        itemStyle: { color: t.series1, borderRadius: [4, 4, 0, 0] },
-        barCategoryGap: "35%",
-        name: "storms",
-      },
-    ],
-  };
-}
 
 export function RunPage() {
   const { projectId = "", runId = "" } = useParams();
@@ -123,10 +76,7 @@ export function RunPage() {
         ))}
       </div>
 
-      <div className="card section">
-        <h2>Runtime distribution</h2>
-        <EChart option={runtimeHistogram(manifest.storms)} height={220} />
-      </div>
+      <ResourcesCard manifest={manifest} stormUrl={(sid) => `/p/${projectId}/run/${runId}/storm/${sid}`} />
 
       <div className="card section">
         <h2>Storms</h2>

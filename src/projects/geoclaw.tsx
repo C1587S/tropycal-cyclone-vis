@@ -7,11 +7,13 @@ import { StormMap, type MapPointLayer } from "../components/StormMap";
 import {
   catalogueName,
   getAnimIndex,
+  getGanim,
   getParams,
   getSeries,
   getStormDetail,
   getTrack,
   type AnimEntry,
+  type GaugeAnimData,
   type StormDetail,
   type StormParams,
   type StormSeries,
@@ -28,21 +30,6 @@ export const geoclaw: ProjectView = {
   runTiles: (r) => [
     { label: "Storms", value: String(r.n_storms), detail: `${r.counts?.ok ?? 0} ok` },
     { label: "Animations", value: String(r.n_mp4 ?? "–"), detail: `${r.n_coarse_only ?? 0} coarse-only` },
-    {
-      label: "Core hours",
-      value: String(Math.round(r.core_hours ?? 0)),
-      detail: r.wall_hours != null ? `${Math.round(r.wall_hours)} wall-h` : undefined,
-    },
-    {
-      label: "Runtime p50",
-      value: fmtRuntime(r.runtime_seconds?.p50),
-      detail: `max ${fmtRuntime(r.runtime_seconds?.max)}`,
-    },
-    {
-      label: "Memory max",
-      value: fmtMem(r.memory_mb?.max),
-      detail: `min ${fmtMem(r.memory_mb?.min)}`,
-    },
     ...(r.sl_init_m
       ? [
           {
@@ -79,15 +66,18 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
   const [animIndex, setAnimIndex] = useState<Record<string, AnimEntry> | null>();
   const [params, setParams] = useState<Record<string, StormParams> | null>();
   const [track, setTrack] = useState<Track | null>();
+  const [ganim, setGanim] = useState<GaugeAnimData | null>();
 
   useEffect(() => {
     setDetail(undefined);
     setSeries(undefined);
     setTrack(undefined);
+    setGanim(undefined);
     getStormDetail(projectId, runId, sid).then(setDetail, () => setDetail(null));
     getSeries(projectId, runId, sid).then(setSeries);
     getAnimIndex(projectId, runId).then(setAnimIndex);
     getParams(projectId, runId).then(setParams);
+    getGanim(projectId, runId, sid).then(setGanim);
     getTrack(projectId, catalogueName(manifest.run.catalogue), sid).then(setTrack);
   }, [projectId, runId, sid, manifest]);
 
@@ -95,6 +85,8 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
     if (!storm.t_start || !storm.t_end) return null;
     return [Date.parse(storm.t_start + "Z") / 1000, Date.parse(storm.t_end + "Z") / 1000];
   }, [storm]);
+
+  const notTriggered = storm.status === "not_triggered";
 
   const mapLayers = useMemo<MapPointLayer[]>(
     () => [
@@ -118,6 +110,7 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
 
   return (
     <>
+      {!notTriggered && (
       <div className="tile-row">
         <div className="tile">
           <div className="label">Peak surge</div>
@@ -157,36 +150,58 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
           <div className="detail">to {fmtWhen(storm.t_end)}</div>
         </div>
       </div>
+      )}
 
-      <div className="storm-grid section">
-        <div className="card">
-          <h2>Animation</h2>
-          <AnimPlayer
-            project={projectId}
-            run={runId}
-            sid={sid}
-            entry={animIndex?.[sid]}
-            hasMp4={!!storm.has_mp4}
-            hasDomainMp4={!!storm.has_domain_mp4}
-          />
+      {notTriggered ? (
+        <div className="storm-grid section">
+          <div className="card">
+            <h2>Track — not simulated</h2>
+            <StormMap layers={mapLayers} context={detail?.dry} track={track} windowT={windowT} />
+          </div>
+          <div className="card">
+            <h2>Why there is no simulation</h2>
+            <NotTriggeredCard storm={storm} track={track} params={params?.[sid]} />
+          </div>
         </div>
-        <div className="card">
-          <h2>Surge map &amp; track</h2>
-          <StormMap layers={mapLayers} context={detail?.dry} track={track} windowT={windowT} />
+      ) : (
+        <div className="storm-grid section">
+          <div className="card">
+            <h2>Animation</h2>
+            <AnimPlayer
+              project={projectId}
+              run={runId}
+              sid={sid}
+              entry={animIndex?.[sid]}
+              hasMp4={!!storm.has_mp4}
+              hasDomainMp4={!!storm.has_domain_mp4}
+            />
+          </div>
+          <div className="card">
+            <h2>Surge map &amp; track</h2>
+            <StormMap
+              layers={mapLayers}
+              context={detail?.dry}
+              track={track}
+              windowT={windowT}
+              ganim={ganim}
+            />
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="card section">
-        <h2>Water level at top gauges</h2>
-        {series === undefined && <p className="muted">Loading series…</p>}
-        {series === null && (
-          <p className="notice">
-            Gauge time series not exported for this storm yet — run scripts/assemble.py with --steps
-            series --series-sids {sid}.
-          </p>
-        )}
-        {series && <SeriesChart series={series} />}
-      </div>
+      {!notTriggered && (
+        <div className="card section">
+          <h2>Water level at top gauges</h2>
+          {series === undefined && <p className="muted">Loading series…</p>}
+          {series === null && (
+            <p className="notice">
+              Gauge time series not exported for this storm yet — run scripts/assemble.py with
+              --steps series --series-sids {sid}.
+            </p>
+          )}
+          {series && <SeriesChart series={series} />}
+        </div>
+      )}
 
       <div className="storm-grid section">
         <div className="card">
@@ -223,6 +238,54 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
         </div>
       </div>
     </>
+  );
+}
+
+/** For storms the pipeline declined to simulate: state the gate that
+ * rejected them and everything the data records about why. The specific
+ * failure (proximity vs wind) lives only in the run logs today — the NetCDF
+ * records just triggered=0 — so this shows the observable facts instead:
+ * the track's peak intensity and the gate's configured thresholds. */
+function NotTriggeredCard({ storm, track, params }: {
+  storm: StormBodyProps["storm"];
+  track?: Track | null;
+  params?: StormParams | null;
+}) {
+  const peak = useMemo(() => {
+    const winds = (track?.points ?? []).map((p) => p[3]).filter((v): v is number => v != null);
+    return winds.length ? Math.max(...winds) : null;
+  }, [track]);
+  const gate = params?.params ?? {};
+  const gateKeys = [
+    "interval_buffer_min",
+    "interval_buffer_max_storm_radius_mult",
+    "interval_rmw_buffer_mult",
+    "interval_threshold_spd",
+  ].filter((k) => gate[k] !== undefined);
+  return (
+    <div>
+      <p style={{ marginTop: 0 }}>
+        Before simulating, the pipeline scans the observed track for a window where the storm is
+        close enough to the region at sufficient intensity. For this storm that scan found no
+        window, so GeoClaw never ran: there is no surge, no gauges, no animation.
+      </p>
+      <table className="kv-table">
+        <tbody>
+          <Row k="observed track points" v={fmtCount(storm.numobs)} />
+          <Row
+            k="peak observed wind"
+            v={peak != null ? `${peak.toFixed(1)} m/s (${(peak * 1.944).toFixed(0)} kt)` : "–"}
+          />
+          {gateKeys.map((k) => (
+            <Row key={k} k={`gate: ${k}`} v={String(gate[k])} />
+          ))}
+        </tbody>
+      </table>
+      <p className="muted" style={{ fontSize: 12 }}>
+        Whether the gate failed on proximity or on wind speed is recorded only in the run logs,
+        not in the output files.
+      </p>
+    </div>
   );
 }
 

@@ -25,6 +25,17 @@ export function fmtCount(n?: number | null): string {
   return n == null ? "–" : n.toLocaleString("en-US");
 }
 
+/** Hours to a human unit that grows with the value: hours, days, months, years. */
+export function fmtHoursHuman(hours?: number | null): string {
+  if (hours == null) return "–";
+  if (hours < 72) return `${Math.round(hours)} h`;
+  const days = hours / 24;
+  if (days < 90) return `${days.toFixed(1)} days`;
+  const months = days / 30.44;
+  if (months < 24) return `${months.toFixed(1)} months`;
+  return `${(days / 365.25).toFixed(1)} years`;
+}
+
 /** Seconds relative to closest approach -> "-132 h" / "+18 h". */
 export function fmtRelHours(sec: number): string {
   const h = sec / 3600;

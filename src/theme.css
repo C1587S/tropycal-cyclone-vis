@@ -166,6 +166,17 @@ a:hover {
   flex: none;
 }
 
+.chart-duo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+@media (max-width: 900px) {
+  .chart-duo {
+    grid-template-columns: 1fr;
+  }
+}
+
 .scope-chips {
   display: inline-flex;
   flex-wrap: wrap;

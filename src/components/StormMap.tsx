@@ -1,7 +1,7 @@
 import maplibregl from "maplibre-gl";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getBasemap, type Basemap, type GaugePoint, type Track } from "../lib/data";
-import { chartTheme, rampCss } from "../lib/palette";
+import { getBasemap, type GaugeAnimData, type GaugePoint, type Track } from "../lib/data";
+import { BLUE_RAMP, chartTheme, rampCss } from "../lib/palette";
 
 /** One selectable point overlay: [lon, lat, value, id] tuples colored by a
  * sequential ramp. The project supplies the semantics (label, caption). */
@@ -20,7 +20,19 @@ interface Props {
   track?: Track | null;
   /** simulated window as epoch seconds; highlights that segment of the track */
   windowT?: [number, number] | null;
+  /** hourly surge frames; enables the peak|animate toggle when present */
+  ganim?: GaugeAnimData | null;
 }
+
+function fmtFrameTime(epochS: number): string {
+  return new Date(epochS * 1000).toISOString().slice(5, 16).replace("T", " ") + "Z";
+}
+
+/** World basemap with land, admin borders, state names and city labels.
+ * Free and keyless (OpenFreeMap); when unreachable the map falls back to the
+ * bundled CONUS coastline so it still works offline. */
+const WORLD_STYLE_URL = "https://tiles.openfreemap.org/styles/positron";
+const FALLBACK_EXTENT: [number, number, number, number] = [-100, -65, 24, 48];
 
 function linesToGeojson(lines: [number, number][][]): GeoJSON.FeatureCollection {
   return {
@@ -64,57 +76,67 @@ function rampStops(ramp: string[], max: number): (number | string)[] {
   return out;
 }
 
-function createMap(
-  container: HTMLDivElement,
-  basemap: Basemap,
-  t: ReturnType<typeof chartTheme>,
-): maplibregl.Map {
-  return new maplibregl.Map({
-    container,
-    attributionControl: false,
-    // keeps the canvas readable after each frame, so screenshots and
-    // right-click "save image" capture the map instead of a cleared buffer
-    preserveDrawingBuffer: true,
-    style: {
-      version: 8,
-      sources: {
-        states: { type: "geojson", data: linesToGeojson(basemap.state_lines) },
-        countries: { type: "geojson", data: linesToGeojson(basemap.country_lines) },
-      },
-      layers: [
-        { id: "bg", type: "background", paint: { "background-color": t.surface } },
-        {
-          id: "states",
-          type: "line",
-          source: "states",
-          paint: { "line-color": t.grid, "line-width": 0.8 },
-        },
-        {
-          id: "countries",
-          type: "line",
-          source: "countries",
-          paint: { "line-color": t.baseline, "line-width": 1.1 },
-        },
-      ],
+async function resolveStyle(): Promise<maplibregl.StyleSpecification> {
+  try {
+    const res = await fetch(WORLD_STYLE_URL, { signal: AbortSignal.timeout(6000) });
+    if (res.ok) return (await res.json()) as maplibregl.StyleSpecification;
+  } catch {
+    // fall through to the bundled style
+  }
+  const t = chartTheme();
+  const basemap = await getBasemap();
+  return {
+    version: 8,
+    sources: {
+      states: { type: "geojson", data: linesToGeojson(basemap.state_lines) as never },
+      countries: { type: "geojson", data: linesToGeojson(basemap.country_lines) as never },
     },
-    bounds: [basemap.extent[0], basemap.extent[2], basemap.extent[1], basemap.extent[3]],
-    fitBoundsOptions: { padding: 20 },
-  });
+    layers: [
+      { id: "bg", type: "background", paint: { "background-color": t.surface } },
+      { id: "states", type: "line", source: "states", paint: { "line-color": t.grid, "line-width": 0.8 } },
+      { id: "countries", type: "line", source: "countries", paint: { "line-color": t.baseline, "line-width": 1.1 } },
+    ],
+  };
 }
 
-/** MapLibre map of one storm: selectable point overlays over the bundled
- * coastline basemap, with an optional track whose simulated window is
- * highlighted. Fully self-contained — no external tile server. */
-export function StormMap({ layers, context, track, windowT }: Props) {
+class RecenterControl implements maplibregl.IControl {
+  private container?: HTMLDivElement;
+  constructor(private onClick: () => void) {}
+  onAdd(): HTMLElement {
+    const div = document.createElement("div");
+    div.className = "maplibregl-ctrl maplibregl-ctrl-group";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.title = "Recenter on storm";
+    btn.setAttribute("aria-label", "Recenter on storm");
+    btn.textContent = "⌖";
+    btn.style.fontSize = "17px";
+    btn.onclick = () => this.onClick();
+    div.appendChild(btn);
+    this.container = div;
+    return div;
+  }
+  onRemove(): void {
+    this.container?.remove();
+  }
+}
+
+/** MapLibre map of one storm: selectable point overlays and the observed
+ * track (simulated window highlighted) over a world basemap. */
+export function StormMap({ layers, context, track, windowT, ganim }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map>();
-  const [basemap, setBasemap] = useState<Basemap>();
+  const recenterRef = useRef<() => void>(() => undefined);
+  const [style, setStyle] = useState<maplibregl.StyleSpecification>();
   const [layerKey, setLayerKey] = useState(layers[0]?.key);
   const [ready, setReady] = useState(false);
   const [mapError, setMapError] = useState<string>();
+  const [animating, setAnimating] = useState(false);
+  const [frame, setFrame] = useState(0);
+  const [playing, setPlaying] = useState(false);
 
   useEffect(() => {
-    getBasemap().then(setBasemap, () => setBasemap(undefined));
+    resolveStyle().then(setStyle, (e) => setMapError(String(e)));
   }, []);
 
   const active = layers.find((l) => l.key === layerKey) ?? layers[0];
@@ -122,16 +144,25 @@ export function StormMap({ layers, context, track, windowT }: Props) {
   const maxVal = useMemo(() => Math.max(0.1, ...points.map((p) => p[2])), [points]);
 
   useEffect(() => {
-    if (!containerRef.current || !basemap || mapRef.current) return;
-    const t = chartTheme();
+    if (!containerRef.current || !style || mapRef.current) return;
     let map: maplibregl.Map;
     try {
-      map = createMap(containerRef.current, basemap, t);
+      map = new maplibregl.Map({
+        container: containerRef.current,
+        style,
+        attributionControl: { compact: true },
+        // keeps the canvas readable after each frame, so screenshots and
+        // right-click "save image" capture the map instead of a cleared buffer
+        preserveDrawingBuffer: true,
+        bounds: [FALLBACK_EXTENT[0], FALLBACK_EXTENT[2], FALLBACK_EXTENT[1], FALLBACK_EXTENT[3]],
+        fitBoundsOptions: { padding: 20 },
+      });
     } catch (e) {
       setMapError(e instanceof Error ? e.message : String(e));
       return;
     }
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    map.addControl(new RecenterControl(() => recenterRef.current()), "top-right");
     map.on("load", () => setReady(true));
     mapRef.current = map;
     return () => {
@@ -139,7 +170,7 @@ export function StormMap({ layers, context, track, windowT }: Props) {
       mapRef.current = undefined;
       setReady(false);
     };
-  }, [basemap]);
+  }, [style]);
 
   // data layers, rebuilt when the storm or selected overlay changes
   useEffect(() => {
@@ -147,7 +178,7 @@ export function StormMap({ layers, context, track, windowT }: Props) {
     if (!map || !ready || !active) return;
     const t = chartTheme();
 
-    for (const id of ["context", "gauges", "track-full", "track-sim"]) {
+    for (const id of ["context", "gauges", "ganim", "track-full", "track-sim"]) {
       if (map.getLayer(id)) map.removeLayer(id);
       if (map.getSource(id)) map.removeSource(id);
     }
@@ -158,7 +189,7 @@ export function StormMap({ layers, context, track, windowT }: Props) {
         id: "context",
         type: "circle",
         source: "context",
-        paint: { "circle-radius": 1.4, "circle-color": t.grid, "circle-opacity": 0.7 },
+        paint: { "circle-radius": 1.4, "circle-color": t.baseline, "circle-opacity": 0.55 },
       });
     }
 
@@ -172,7 +203,7 @@ export function StormMap({ layers, context, track, windowT }: Props) {
         id: "track-full",
         type: "line",
         source: "track-full",
-        paint: { "line-color": t.textMuted, "line-width": 1.3, "line-dasharray": [2, 2] },
+        paint: { "line-color": t.textMuted, "line-width": 1.4, "line-dasharray": [2, 2] },
       });
       if (windowT) {
         const sim = track.points.filter((p) => p[0] >= windowT[0] && p[0] <= windowT[1]);
@@ -195,7 +226,28 @@ export function StormMap({ layers, context, track, windowT }: Props) {
       }
     }
 
-    if (points.length) {
+    if (animating && ganim) {
+      map.addSource("ganim", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: "ganim",
+        type: "circle",
+        source: "ganim",
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["get", "v"], 0, 2.2, ganim.scale_max, 5.5],
+          "circle-color": [
+            "interpolate",
+            ["linear"],
+            ["get", "v"],
+            ...rampStops(BLUE_RAMP, ganim.scale_max),
+          ] as never,
+          "circle-stroke-color": "#fcfcfb",
+          "circle-stroke-width": 0.6,
+        },
+      });
+    } else if (points.length) {
       map.addSource("gauges", { type: "geojson", data: pointsToGeojson(points) });
       map.addLayer({
         id: "gauges",
@@ -204,7 +256,7 @@ export function StormMap({ layers, context, track, windowT }: Props) {
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["get", "v"], 0, 2.2, maxVal, 5.5],
           "circle-color": ["interpolate", ["linear"], ["get", "v"], ...rampStops(active.ramp, maxVal)] as never,
-          "circle-stroke-color": t.surface,
+          "circle-stroke-color": "#fcfcfb",
           "circle-stroke-width": 0.6,
         },
       });
@@ -226,38 +278,108 @@ export function StormMap({ layers, context, track, windowT }: Props) {
         map.getCanvas().style.cursor = "";
         popup.remove();
       });
-
-      const lons = points.map((p) => p[0]);
-      const lats = points.map((p) => p[1]);
-      map.fitBounds(
-        [
-          [Math.min(...lons) - 1.5, Math.min(...lats) - 1.5],
-          [Math.max(...lons) + 1.5, Math.max(...lats) + 1.5],
-        ],
-        { padding: 20, duration: 400 },
-      );
-    } else if (track) {
-      const lons = track.points.map((p) => p[1]);
-      const lats = track.points.map((p) => p[2]);
-      map.fitBounds(
-        [
-          [Math.min(...lons) - 1, Math.min(...lats) - 1],
-          [Math.max(...lons) + 1, Math.max(...lats) + 1],
-        ],
-        { padding: 20, duration: 400 },
-      );
     }
-  }, [active, context, track, windowT, points, maxVal, ready]);
+
+    const focus = points.length
+      ? points.map((p) => [p[0], p[1]] as [number, number])
+      : track
+        ? track.points.map((p) => [p[1], p[2]] as [number, number])
+        : [];
+    const fit = () => {
+      if (focus.length) {
+        const lons = focus.map((c) => c[0]);
+        const lats = focus.map((c) => c[1]);
+        map.fitBounds(
+          [
+            [Math.min(...lons) - 1.5, Math.min(...lats) - 1.5],
+            [Math.max(...lons) + 1.5, Math.max(...lats) + 1.5],
+          ],
+          { padding: 20, duration: 400 },
+        );
+      } else {
+        map.fitBounds(
+          [
+            [FALLBACK_EXTENT[0], FALLBACK_EXTENT[2]],
+            [FALLBACK_EXTENT[1], FALLBACK_EXTENT[3]],
+          ],
+          { padding: 20, duration: 400 },
+        );
+      }
+    };
+    recenterRef.current = fit;
+    fit();
+  }, [active, context, track, windowT, points, maxVal, ready, animating, ganim]);
+
+  // push the current animation frame into the ganim source
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !animating || !ganim) return;
+    const src = map.getSource("ganim") as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+    const q = ganim.frames[Math.min(frame, ganim.frames.length - 1)] ?? [];
+    const features: GeoJSON.Feature[] = [];
+    for (let i = 0; i < q.length; i++) {
+      if (q[i] === 255) continue;
+      features.push({
+        type: "Feature",
+        properties: { v: (q[i] / 254) * ganim.scale_max },
+        geometry: { type: "Point", coordinates: [ganim.lon[i], ganim.lat[i]] },
+      });
+    }
+    src.setData({ type: "FeatureCollection", features });
+  }, [frame, animating, ganim, ready]);
+
+  useEffect(() => {
+    if (!playing || !animating || !ganim) return;
+    const id = setInterval(() => setFrame((f) => (f + 1) % ganim.frames.length), 160);
+    return () => clearInterval(id);
+  }, [playing, animating, ganim]);
 
   if (mapError) {
     return <p className="notice">The map could not initialize (WebGL unavailable): {mapError}</p>;
   }
 
+  const frameTime = ganim?.times[Math.min(frame, (ganim?.times.length ?? 1) - 1)];
+
   return (
     <div>
       <div ref={containerRef} className="map-container" />
+      {animating && ganim && (
+        <div className="anim-controls">
+          <button className="btn" onClick={() => setPlaying(!playing)} aria-label={playing ? "Pause" : "Play"}>
+            {playing ? "❚❚" : "▶"}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={ganim.frames.length - 1}
+            value={frame}
+            onChange={(e) => {
+              setPlaying(false);
+              setFrame(Number(e.target.value));
+            }}
+          />
+          <span className="time-label">{frameTime != null ? fmtFrameTime(frameTime) : ""}</span>
+        </div>
+      )}
       <div className="map-legend">
-        {layers.length > 1 && (
+        {ganim && (
+          <div className="seg-group" role="group" aria-label="map mode">
+            <button
+              className={!animating ? "active" : ""}
+              onClick={() => {
+                setAnimating(false);
+                setPlaying(false);
+              }}
+            >
+              peak
+            </button>
+            <button className={animating ? "active" : ""} onClick={() => setAnimating(true)}>
+              animate
+            </button>
+          </div>
+        )}
+        {!animating && layers.length > 1 && layers.some((l) => l.points.length > 0) && (
           <div className="seg-group" role="group" aria-label="map metric">
             {layers.map((l) => (
               <button
@@ -270,13 +392,30 @@ export function StormMap({ layers, context, track, windowT }: Props) {
             ))}
           </div>
         )}
-        <span>0</span>
-        <div className="ramp" style={{ background: active ? rampCss(active.ramp) : undefined }} />
-        <span>{maxVal.toFixed(1)} m</span>
-        <span className="muted">
-          {active?.caption}
-          {track ? " · dashed: observed track, solid: simulated window" : ""}
-        </span>
+        {animating && ganim ? (
+          <>
+            <span>0</span>
+            <div className="ramp" style={{ background: rampCss(BLUE_RAMP) }} />
+            <span>{ganim.scale_max.toFixed(1)} m</span>
+            <span className="muted">
+              hourly surge above sl_init — scale fixed across storms and runs
+            </span>
+          </>
+        ) : (
+          <>
+            {points.length > 0 && (
+              <>
+                <span>0</span>
+                <div className="ramp" style={{ background: active ? rampCss(active.ramp) : undefined }} />
+                <span>{maxVal.toFixed(1)} m</span>
+              </>
+            )}
+            <span className="muted">
+              {points.length > 0 ? active?.caption : ""}
+              {track ? `${points.length ? " · " : ""}dashed: observed track, solid: simulated window` : ""}
+            </span>
+          </>
+        )}
       </div>
     </div>
   );

@@ -38,7 +38,7 @@ python3 "$REPO_DIR/scripts/assemble.py" \
   --run "$RUN" \
   --report-dir "$REPORT_DIR" \
   --anim-dir "$ANIM_DIR" \
-  --steps manifest,details,anim,params,tracks
+  --steps manifest,details,anim,params,tracks,ganim
 
 # Upload the whole staging tree; the CLI hashes files and only transfers
 # what changed, which also refreshes projects.json and the registry.

@@ -171,6 +171,18 @@ export interface AnimEntry {
   fig?: string;
 }
 
+/** Hourly surge frames at the static map's gauge set. Values are quantized:
+ * v/254 * scale_max meters, 255 = no reading that hour. The scale is fixed
+ * across storms and runs so animations are directly comparable. */
+export interface GaugeAnimData {
+  sid: string;
+  scale_max: number;
+  lon: number[];
+  lat: number[];
+  times: number[]; // epoch seconds, hourly
+  frames: number[][];
+}
+
 export interface StormParams {
   params_version?: string;
   params?: Record<string, unknown>;
@@ -244,6 +256,8 @@ export const getAnimIndex = (project: string, run: string) =>
   fetchOptional<Record<string, AnimEntry>>(`${project}/runs/${run}/anim/index.json`);
 export const getParams = (project: string, run: string) =>
   fetchOptional<Record<string, StormParams>>(`${project}/runs/${run}/params.json`);
+export const getGanim = (project: string, run: string, sid: string) =>
+  fetchOptional<GaugeAnimData>(`${project}/runs/${run}/ganim/${sid}.json.gz`);
 export const getTrack = (project: string, catalogue: string, sid: string) =>
   fetchOptional<Track>(`${project}/catalogues/${catalogue}/tracks/${sid}.json`);
 export const getBasemap = () => fetchJson<Basemap>("basemap.json");

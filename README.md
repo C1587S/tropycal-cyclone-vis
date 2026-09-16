@@ -35,6 +35,7 @@ public/data/
       manifest.json     slim run manifest (scalars only)
       storms/<sid>.json.gz  point overlays for the map
       series/<sid>.json.gz  time series at selected points (selected storms)
+      ganim/<sid>.json.gz   hourly gauge frames for the in-browser animation
       params.json       model parameters per storm
       anim/             <sid>.mp4, <sid>_domain.mp4, index.json (frame times)
 ```
@@ -100,6 +101,12 @@ demand, then published by the next upload:
 python3 scripts/assemble.py --run <run_name> --report-dir ... \
   --steps series --series-sids 2005236N23285,2008245N17323
 ```
+
+## Storm notes
+
+Notes on a storm are GitHub Discussions rendered by giscus, one thread per
+storm shared across runs. Setup instructions live in `src/notes-config.ts`;
+until it is filled in, the notes card shows those instructions.
 
 ## Deploying the app
 

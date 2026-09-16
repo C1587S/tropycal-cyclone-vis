@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { NotesCard } from "../components/NotesCard";
 import { StatusChip } from "../components/StatusChip";
 import { getManifest, getRegistry, type Registry, type RunManifest } from "../lib/data";
 import { PROJECT_VIEWS } from "../projects";
@@ -65,6 +66,11 @@ export function StormPage() {
       </div>
 
       <view.StormBody projectId={projectId} runId={runId} sid={sid} manifest={manifest} storm={storm} />
+
+      <div className="card section">
+        <h2>Notes</h2>
+        <NotesCard term={`${projectId}/storm/${sid}`} />
+      </div>
     </main>
   );
 }
