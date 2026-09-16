@@ -2,6 +2,7 @@ import type { EChartsOption } from "echarts";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { EChart } from "../components/EChart";
+import { ScopeChips } from "../components/ScopeChips";
 import { getManifest, type RunManifest, type StormRec } from "../lib/data";
 import { chartTheme } from "../lib/palette";
 import { PROJECT_VIEWS } from "../projects";
@@ -104,6 +105,7 @@ export function RunPage() {
     <main className="page-body">
       <div className="page-title">
         <h1>{r.name}</h1>
+        <ScopeChips scope={r.scope} />
         <span className="muted">
           generated {r.generated?.slice(0, 10)}
           {r.catalogue ? ` · catalogue ${r.catalogue.split("/").pop()}` : ""}

@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import os
 import shutil
 import sys
 import time
@@ -39,6 +40,18 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_ROOT = REPO_ROOT / "public" / "data"
+
+
+def cil_root() -> Path:
+    """The cluster filesystem root: /project/cil on the cluster itself,
+    /Volumes/cil where it is mounted, or $CIL_ROOT."""
+    for cand in (os.environ.get("CIL_ROOT"), "/project/cil", "/Volumes/cil"):
+        if cand and Path(cand).exists():
+            return Path(cand)
+    raise SystemExit("cluster filesystem not found; set CIL_ROOT")
+
+
+CIL = cil_root()
 
 PROJECT_META = {
     "geoclaw": {
@@ -51,11 +64,11 @@ PROJECT_META = {
     },
 }
 
-TRACKS_ZARR = (
-    "/Volumes/cil/coastal/tropical-cyclones/inputs/impactlab-data/coastal/"
+TRACKS_ZARR = str(
+    CIL / "coastal/tropical-cyclones/inputs/impactlab-data/coastal/"
     "data/int/tracks/historical/ibtracs/20240318/ALL.zarr"
 )
-BASEMAP_SRC = "/Volumes/cil/coastal/tropical-cyclones/reports/basemap.json"
+BASEMAP_SRC = CIL / "coastal/tropical-cyclones/reports/basemap.json"
 
 # Keys split out of the slim manifest into the per-storm detail file.
 DETAIL_KEYS = ("wet_gauge_points", "surge_gauge_points")
@@ -87,12 +100,13 @@ def load_manifest(report_dir: Path) -> dict:
     return json.loads((report_dir / "manifest.json").read_text())
 
 
-def assemble_manifest(run: str, manifest: dict, out_dir: Path) -> None:
+def assemble_manifest(run: str, manifest: dict, out_dir: Path, scope: dict) -> None:
     slim_storms = []
     for s in manifest["storms"]:
         slim_storms.append({k: v for k, v in s.items() if k not in DETAIL_KEYS})
-    n = write_json(out_dir / "manifest.json", {"run": manifest["run"], "storms": slim_storms})
-    log(f"{run}: slim manifest {n / 1e6:.2f} MB, {len(slim_storms)} storms")
+    run_block = {**manifest["run"], "scope": scope}
+    n = write_json(out_dir / "manifest.json", {"run": run_block, "storms": slim_storms})
+    log(f"{run}: slim manifest {n / 1e6:.2f} MB, {len(slim_storms)} storms, scope {scope}")
 
 
 def assemble_storm_details(run: str, manifest: dict, report_dir: Path, out_dir: Path) -> None:
@@ -296,6 +310,38 @@ def assemble_tracks(manifest: dict, catalogue_name: str, project_root: Path) -> 
     log(f"tracks: {len(rows)} storms, {total / 1e6:.1f} MB into {out}")
 
 
+def derive_scope(manifest: dict, catalogue_name: str) -> dict:
+    """What domain this run covers, read from what the pipeline records.
+
+    The catalogue's sibling .meta.txt (written by geoclaw_runner's catalogue
+    builder) records filter_region and filter_basin explicitly; when it is
+    absent the same tokens are recovered from the catalogue filename
+    (<region>_<basin>_<era>_<version>) and the storm records. All current
+    GeoClaw runs simulate observed IBTrACS storms, hence kind=historical;
+    synthetic-track projects (Emanuel sets) will set kind=synthetic with
+    gcm/scenario from their own metadata (stats.txt: Model/Type/Years).
+    """
+    scope = {"kind": "historical", "source": "IBTrACS"}
+
+    cat_path = Path(manifest["run"]["catalogue"].replace("/project/cil", str(CIL)))
+    meta_path = cat_path.parent / (cat_path.stem + ".meta.txt")
+    meta: dict[str, str] = {}
+    if meta_path.exists():
+        for line in meta_path.read_text().splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                meta[k.strip()] = v.strip()
+
+    tokens = catalogue_name.split("_")
+    scope["region"] = (meta.get("filter_region") or (tokens[0] if tokens else "")).upper()
+    scope["basin"] = (meta.get("filter_basin") or (tokens[1] if len(tokens) > 1 else "")).upper()
+
+    seasons = [s.get("season") for s in manifest["storms"] if s.get("season")]
+    if seasons:
+        scope["seasons"] = [int(min(seasons)), int(max(seasons))]
+    return scope
+
+
 def register_project(project: str) -> None:
     """Ensure the project appears in the top-level projects.json."""
     path = DATA_ROOT / "projects.json"
@@ -305,7 +351,7 @@ def register_project(project: str) -> None:
         write_json(path, projects)
 
 
-def update_registry(run: str, manifest: dict, catalogue_name: str, project_root: Path) -> None:
+def update_registry(run: str, manifest: dict, catalogue_name: str, project_root: Path, scope: dict) -> None:
     reg_path = project_root / "index.json"
     registry = json.loads(reg_path.read_text()) if reg_path.exists() else {"runs": []}
     r = manifest["run"]
@@ -317,6 +363,7 @@ def update_registry(run: str, manifest: dict, catalogue_name: str, project_root:
         "counts": r.get("counts"),
         "core_hours": r.get("core_hours"),
         "n_mp4": r.get("n_mp4"),
+        "scope": scope,
     }
     registry["runs"] = [e for e in registry["runs"] if e["name"] != run] + [entry]
     registry["runs"].sort(key=lambda e: e.get("generated") or "")
@@ -344,7 +391,7 @@ def main() -> int:
     out_dir = project_root / "runs" / args.run
     steps = {s.strip() for s in args.steps.split(",") if s.strip()}
     compact_dirs = [Path(d) for d in (args.compact or manifest["run"].get("compact", "")).replace(
-        "/project/cil/", "/Volumes/cil/").split(",") if d]
+        "/project/cil", str(CIL)).split(",") if d]
 
     basemap_dest = DATA_ROOT / "basemap.json"
     if not basemap_dest.exists() and Path(BASEMAP_SRC).exists():
@@ -353,8 +400,9 @@ def main() -> int:
 
     register_project(args.project)
     if "manifest" in steps:
-        assemble_manifest(args.run, manifest, out_dir)
-        update_registry(args.run, manifest, catalogue_name, project_root)
+        scope = derive_scope(manifest, catalogue_name)
+        assemble_manifest(args.run, manifest, out_dir, scope)
+        update_registry(args.run, manifest, catalogue_name, project_root, scope)
     if "details" in steps:
         assemble_storm_details(args.run, manifest, report_dir, out_dir)
     if "anim" in steps:

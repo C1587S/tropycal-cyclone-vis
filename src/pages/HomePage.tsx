@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { ScopeChips } from "../components/ScopeChips";
 import { StatusChip } from "../components/StatusChip";
 import { getProjects, getRegistry, type ProjectMeta, type Registry } from "../lib/data";
 
@@ -37,6 +38,9 @@ export function HomePage() {
             {[...(registries[p.id]?.runs ?? [])].reverse().map((r) => (
               <Link className="run-card" key={r.name} to={`/p/${p.id}/run/${r.name}`}>
                 <div className="name">{r.name}</div>
+                <div style={{ marginTop: 8 }}>
+                  <ScopeChips scope={r.scope} />
+                </div>
                 <div className="facts">
                   <span>{r.n_storms} storms</span>
                   <span>{r.counts?.ok ?? "–"} ok</span>

@@ -166,6 +166,32 @@ a:hover {
   flex: none;
 }
 
+.scope-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.scope-chip {
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--baseline);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.scope-chip.kind {
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.scope-chip.kind.synthetic {
+  border-color: color-mix(in srgb, var(--series-2) 60%, var(--baseline));
+  background: color-mix(in srgb, var(--series-2) 12%, var(--surface-1));
+}
+.scope-chip.kind.historical {
+  background: color-mix(in srgb, var(--baseline) 22%, var(--surface-1));
+}
+
 .storm-table {
   width: 100%;
   border-collapse: collapse;

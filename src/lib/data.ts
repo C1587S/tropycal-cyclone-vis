@@ -13,6 +13,20 @@ export interface ProjectMeta {
   description?: string;
 }
 
+/** What a run covers: clipping region, basin, observed-season span, and
+ * whether its storms are observed history or synthetic futures (in which
+ * case gcm/scenario identify the climate pathway). Derived by assemble.py
+ * from the catalogue metadata / track-set metadata, not invented. */
+export interface RunScope {
+  kind: "historical" | "synthetic";
+  source?: string;
+  region?: string;
+  basin?: string;
+  seasons?: [number, number];
+  gcm?: string;
+  scenario?: string;
+}
+
 export interface RunSummary {
   name: string;
   generated?: string;
@@ -21,6 +35,7 @@ export interface RunSummary {
   counts: Record<string, number>;
   core_hours?: number;
   n_mp4?: number;
+  scope?: RunScope;
 }
 
 export interface Registry {
@@ -103,6 +118,7 @@ export interface RunManifest {
     runtime_seconds?: { mean?: number; p50?: number; min?: number; max?: number };
     memory_mb?: { min: number; max: number } | null;
     sl_init_m?: { min?: number; median?: number; max?: number } | null;
+    scope?: RunScope;
   };
   storms: StormRec[];
 }
@@ -172,7 +188,10 @@ export interface Basemap {
   labels: { x: number; y: number; text: string; kind: string }[];
 }
 
-const BASE = import.meta.env.BASE_URL + "data";
+/** Data location: a remote base (e.g. a Hugging Face dataset's resolve URL)
+ * via VITE_DATA_BASE, falling back to /data served alongside the app. */
+const configured = (import.meta.env.VITE_DATA_BASE as string | undefined)?.replace(/\/+$/, "");
+const BASE = configured || import.meta.env.BASE_URL + "data";
 
 const cache = new Map<string, Promise<unknown>>();
 
@@ -187,10 +206,12 @@ async function decode(res: Response): Promise<unknown> {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 
-function fetchJson<T>(path: string): Promise<T> {
+function fetchJson<T>(path: string, revalidate = false): Promise<T> {
   let p = cache.get(path);
   if (!p) {
-    p = fetch(`${BASE}/${path}`).then((res) => {
+    // registry-like files change on every publish; revalidate them against
+    // the CDN's etag instead of trusting the browser cache
+    p = fetch(`${BASE}/${path}`, revalidate ? { cache: "no-cache" } : undefined).then((res) => {
       if (!res.ok) {
         cache.delete(path);
         throw new Error(`fetch ${path}: HTTP ${res.status}`);
@@ -211,10 +232,10 @@ async function fetchOptional<T>(path: string): Promise<T | null> {
   }
 }
 
-export const getProjects = () => fetchJson<ProjectMeta[]>("projects.json");
-export const getRegistry = (project: string) => fetchJson<Registry>(`${project}/index.json`);
+export const getProjects = () => fetchJson<ProjectMeta[]>("projects.json", true);
+export const getRegistry = (project: string) => fetchJson<Registry>(`${project}/index.json`, true);
 export const getManifest = (project: string, run: string) =>
-  fetchJson<RunManifest>(`${project}/runs/${run}/manifest.json`);
+  fetchJson<RunManifest>(`${project}/runs/${run}/manifest.json`, true);
 export const getStormDetail = (project: string, run: string, sid: string) =>
   fetchJson<StormDetail>(`${project}/runs/${run}/storms/${sid}.json.gz`);
 export const getSeries = (project: string, run: string, sid: string) =>
