@@ -7,13 +7,11 @@ import { StormMap, type MapPointLayer } from "../components/StormMap";
 import {
   catalogueName,
   getAnimIndex,
-  getGanim,
   getParams,
   getSeries,
   getStormDetail,
   getTrack,
   type AnimEntry,
-  type GaugeAnimData,
   type StormDetail,
   type StormParams,
   type StormSeries,
@@ -66,18 +64,15 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
   const [animIndex, setAnimIndex] = useState<Record<string, AnimEntry> | null>();
   const [params, setParams] = useState<Record<string, StormParams> | null>();
   const [track, setTrack] = useState<Track | null>();
-  const [ganim, setGanim] = useState<GaugeAnimData | null>();
 
   useEffect(() => {
     setDetail(undefined);
     setSeries(undefined);
     setTrack(undefined);
-    setGanim(undefined);
     getStormDetail(projectId, runId, sid).then(setDetail, () => setDetail(null));
     getSeries(projectId, runId, sid).then(setSeries);
     getAnimIndex(projectId, runId).then(setAnimIndex);
     getParams(projectId, runId).then(setParams);
-    getGanim(projectId, runId, sid).then(setGanim);
     getTrack(projectId, catalogueName(manifest.run.catalogue), sid).then(setTrack);
   }, [projectId, runId, sid, manifest]);
 
@@ -94,6 +89,7 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
         key: "surge",
         label: "surge",
         points: detail?.surge_gauge_points ?? [],
+        total: storm.n_surge_points_total,
         ramp: BLUE_RAMP,
         caption: "peak sea-surface rise above sl_init, ocean gauges",
       },
@@ -101,11 +97,12 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
         key: "depth",
         label: "depth",
         points: detail?.wet_gauge_points ?? [],
+        total: storm.wet_gauges,
         ramp: ORANGE_RAMP,
         caption: "peak inundation depth, land gauges",
       },
     ],
-    [detail],
+    [detail, storm],
   );
 
   return (
@@ -178,13 +175,7 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
           </div>
           <div className="card">
             <h2>Surge map &amp; track</h2>
-            <StormMap
-              layers={mapLayers}
-              context={detail?.dry}
-              track={track}
-              windowT={windowT}
-              ganim={ganim}
-            />
+            <StormMap layers={mapLayers} context={detail?.dry} track={track} windowT={windowT} />
           </div>
         </div>
       )}

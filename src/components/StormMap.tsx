@@ -1,14 +1,17 @@
 import maplibregl from "maplibre-gl";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getBasemap, type GaugeAnimData, type GaugePoint, type Track } from "../lib/data";
-import { BLUE_RAMP, chartTheme, rampCss } from "../lib/palette";
+import { getBasemap, type GaugePoint, type Track } from "../lib/data";
+import { chartTheme, rampCss } from "../lib/palette";
 
 /** One selectable point overlay: [lon, lat, value, id] tuples colored by a
- * sequential ramp. The project supplies the semantics (label, caption). */
+ * sequential ramp. The project supplies the semantics (label, caption).
+ * `total` is the full population size; when it exceeds points.length the
+ * export was capped to the top N by value, and the UI says so. */
 export interface MapPointLayer {
   key: string;
   label: string;
   points: GaugePoint[];
+  total?: number;
   ramp: string[];
   caption: string;
 }
@@ -20,12 +23,6 @@ interface Props {
   track?: Track | null;
   /** simulated window as epoch seconds; highlights that segment of the track */
   windowT?: [number, number] | null;
-  /** hourly surge frames; enables the peak|animate toggle when present */
-  ganim?: GaugeAnimData | null;
-}
-
-function fmtFrameTime(epochS: number): string {
-  return new Date(epochS * 1000).toISOString().slice(5, 16).replace("T", " ") + "Z";
 }
 
 /** World basemap with land, admin borders, state names and city labels.
@@ -76,6 +73,14 @@ function rampStops(ramp: string[], max: number): (number | string)[] {
   return out;
 }
 
+function layerLabel(l: MapPointLayer): string {
+  if (!l.points.length) return l.label;
+  if (l.total != null && l.total > l.points.length) {
+    return `${l.label} (top ${l.points.length.toLocaleString()} of ${l.total.toLocaleString()})`;
+  }
+  return `${l.label} (${l.points.length.toLocaleString()})`;
+}
+
 async function resolveStyle(): Promise<maplibregl.StyleSpecification> {
   try {
     const res = await fetch(WORLD_STYLE_URL, { signal: AbortSignal.timeout(6000) });
@@ -123,7 +128,7 @@ class RecenterControl implements maplibregl.IControl {
 
 /** MapLibre map of one storm: selectable point overlays and the observed
  * track (simulated window highlighted) over a world basemap. */
-export function StormMap({ layers, context, track, windowT, ganim }: Props) {
+export function StormMap({ layers, context, track, windowT }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map>();
   const recenterRef = useRef<() => void>(() => undefined);
@@ -131,9 +136,6 @@ export function StormMap({ layers, context, track, windowT, ganim }: Props) {
   const [layerKey, setLayerKey] = useState(layers[0]?.key);
   const [ready, setReady] = useState(false);
   const [mapError, setMapError] = useState<string>();
-  const [animating, setAnimating] = useState(false);
-  const [frame, setFrame] = useState(0);
-  const [playing, setPlaying] = useState(false);
 
   useEffect(() => {
     resolveStyle().then(setStyle, (e) => setMapError(String(e)));
@@ -178,7 +180,7 @@ export function StormMap({ layers, context, track, windowT, ganim }: Props) {
     if (!map || !ready || !active) return;
     const t = chartTheme();
 
-    for (const id of ["context", "gauges", "ganim", "track-full", "track-sim"]) {
+    for (const id of ["context", "gauges", "track-full", "track-sim"]) {
       if (map.getLayer(id)) map.removeLayer(id);
       if (map.getSource(id)) map.removeSource(id);
     }
@@ -226,28 +228,7 @@ export function StormMap({ layers, context, track, windowT, ganim }: Props) {
       }
     }
 
-    if (animating && ganim) {
-      map.addSource("ganim", {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
-      map.addLayer({
-        id: "ganim",
-        type: "circle",
-        source: "ganim",
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["get", "v"], 0, 2.2, ganim.scale_max, 5.5],
-          "circle-color": [
-            "interpolate",
-            ["linear"],
-            ["get", "v"],
-            ...rampStops(BLUE_RAMP, ganim.scale_max),
-          ] as never,
-          "circle-stroke-color": "#fcfcfb",
-          "circle-stroke-width": 0.6,
-        },
-      });
-    } else if (points.length) {
+    if (points.length) {
       map.addSource("gauges", { type: "geojson", data: pointsToGeojson(points) });
       map.addLayer({
         id: "gauges",
@@ -308,78 +289,17 @@ export function StormMap({ layers, context, track, windowT, ganim }: Props) {
     };
     recenterRef.current = fit;
     fit();
-  }, [active, context, track, windowT, points, maxVal, ready, animating, ganim]);
-
-  // push the current animation frame into the ganim source
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !ready || !animating || !ganim) return;
-    const src = map.getSource("ganim") as maplibregl.GeoJSONSource | undefined;
-    if (!src) return;
-    const q = ganim.frames[Math.min(frame, ganim.frames.length - 1)] ?? [];
-    const features: GeoJSON.Feature[] = [];
-    for (let i = 0; i < q.length; i++) {
-      if (q[i] === 255) continue;
-      features.push({
-        type: "Feature",
-        properties: { v: (q[i] / 254) * ganim.scale_max },
-        geometry: { type: "Point", coordinates: [ganim.lon[i], ganim.lat[i]] },
-      });
-    }
-    src.setData({ type: "FeatureCollection", features });
-  }, [frame, animating, ganim, ready]);
-
-  useEffect(() => {
-    if (!playing || !animating || !ganim) return;
-    const id = setInterval(() => setFrame((f) => (f + 1) % ganim.frames.length), 160);
-    return () => clearInterval(id);
-  }, [playing, animating, ganim]);
+  }, [active, context, track, windowT, points, maxVal, ready]);
 
   if (mapError) {
     return <p className="notice">The map could not initialize (WebGL unavailable): {mapError}</p>;
   }
 
-  const frameTime = ganim?.times[Math.min(frame, (ganim?.times.length ?? 1) - 1)];
-
   return (
     <div>
       <div ref={containerRef} className="map-container" />
-      {animating && ganim && (
-        <div className="anim-controls">
-          <button className="btn" onClick={() => setPlaying(!playing)} aria-label={playing ? "Pause" : "Play"}>
-            {playing ? "❚❚" : "▶"}
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={ganim.frames.length - 1}
-            value={frame}
-            onChange={(e) => {
-              setPlaying(false);
-              setFrame(Number(e.target.value));
-            }}
-          />
-          <span className="time-label">{frameTime != null ? fmtFrameTime(frameTime) : ""}</span>
-        </div>
-      )}
       <div className="map-legend">
-        {ganim && (
-          <div className="seg-group" role="group" aria-label="map mode">
-            <button
-              className={!animating ? "active" : ""}
-              onClick={() => {
-                setAnimating(false);
-                setPlaying(false);
-              }}
-            >
-              peak
-            </button>
-            <button className={animating ? "active" : ""} onClick={() => setAnimating(true)}>
-              animate
-            </button>
-          </div>
-        )}
-        {!animating && layers.length > 1 && layers.some((l) => l.points.length > 0) && (
+        {layers.length > 1 && layers.some((l) => l.points.length > 0) && (
           <div className="seg-group" role="group" aria-label="map metric">
             {layers.map((l) => (
               <button
@@ -387,35 +307,25 @@ export function StormMap({ layers, context, track, windowT, ganim }: Props) {
                 className={active?.key === l.key ? "active" : ""}
                 onClick={() => setLayerKey(l.key)}
               >
-                {l.label} {l.points.length ? `(${l.points.length})` : ""}
+                {layerLabel(l)}
               </button>
             ))}
           </div>
         )}
-        {animating && ganim ? (
+        {points.length > 0 && (
           <>
             <span>0</span>
-            <div className="ramp" style={{ background: rampCss(BLUE_RAMP) }} />
-            <span>{ganim.scale_max.toFixed(1)} m</span>
-            <span className="muted">
-              hourly surge above sl_init — scale fixed across storms and runs
-            </span>
-          </>
-        ) : (
-          <>
-            {points.length > 0 && (
-              <>
-                <span>0</span>
-                <div className="ramp" style={{ background: active ? rampCss(active.ramp) : undefined }} />
-                <span>{maxVal.toFixed(1)} m</span>
-              </>
-            )}
-            <span className="muted">
-              {points.length > 0 ? active?.caption : ""}
-              {track ? `${points.length ? " · " : ""}dashed: observed track, solid: simulated window` : ""}
-            </span>
+            <div className="ramp" style={{ background: active ? rampCss(active.ramp) : undefined }} />
+            <span>{maxVal.toFixed(1)} m</span>
           </>
         )}
+        <span className="muted">
+          {points.length > 0 ? active?.caption : ""}
+          {active?.total != null && active.total > points.length
+            ? ` · showing the ${points.length.toLocaleString()} highest of ${active.total.toLocaleString()} gauges`
+            : ""}
+          {track ? `${points.length ? " · " : ""}dashed: observed track, solid: simulated window` : ""}
+        </span>
       </div>
     </div>
   );

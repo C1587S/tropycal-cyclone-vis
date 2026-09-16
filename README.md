@@ -35,7 +35,6 @@ public/data/
       manifest.json     slim run manifest (scalars only)
       storms/<sid>.json.gz  point overlays for the map
       series/<sid>.json.gz  time series at selected points (selected storms)
-      ganim/<sid>.json.gz   hourly gauge frames for the in-browser animation
       params.json       model parameters per storm
       anim/             <sid>.mp4, <sid>_domain.mp4, index.json (frame times)
 ```

@@ -71,29 +71,6 @@ for (const { name, path } of PAGES) {
       );
       return `${c.length} chart canvases`;
     });
-    checks.animateMode = await page.evaluate(() => {
-      const btn = [...document.querySelectorAll(".map-legend button")].find(
-        (b) => b.textContent?.trim() === "animate",
-      );
-      if (!btn) return "no animate toggle";
-      btn.click();
-      return "clicked";
-    });
-    if (checks.animateMode === "clicked") {
-      await new Promise((r) => setTimeout(r, 2000));
-      checks.animFrame = await page.evaluate(() => {
-        // the mp4 player owns the first slider; animate mode adds the map's
-        const sliders = document.querySelectorAll(".anim-controls input[type=range]");
-        if (sliders.length < 2) return `only ${sliders.length} slider(s), map slider missing`;
-        const slider = sliders[sliders.length - 1];
-        // React tracks the input's value internally; a plain .value write is
-        // deduped, so go through the native setter to trigger onChange
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-        setter.call(slider, String(Math.floor(Number(slider.max) * 0.75)));
-        slider.dispatchEvent(new Event("input", { bubbles: true }));
-        return `${sliders.length} sliders, map slider max=${slider.max}`;
-      });
-    }
   }
   await page.screenshot({ path: `${outDir}/smoke-${name}.png`, fullPage: name !== "storm" });
   const bad = errors.length > 0 || (name === "storm" && String(checks.mapPainted).startsWith("0/"));

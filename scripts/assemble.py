@@ -76,15 +76,6 @@ DETAIL_KEYS = ("wet_gauge_points", "surge_gauge_points")
 SERIES_TOP_SURGE = 10  # gauges ranked by peak surge
 SERIES_TOP_DEPTH = 5  # gauges ranked by peak inundation depth
 
-# h above this counts as wet; same value as build_report.py's WET_THRESHOLD_M
-WET_THRESHOLD_M = 0.05
-
-# Gauge-animation export: hourly frames of surge (eta - sl_init) at the same
-# ocean gauges the static map shows, quantized to one byte per gauge per
-# frame on a scale FIXED across storms and runs so animations are comparable.
-GANIM_SCALE_MAX_M = 5.0
-GANIM_CADENCE_S = 3600
-GANIM_NULL = 255  # quantized sentinel for "no reading this hour"
 
 
 def log(msg: str) -> None:
@@ -268,81 +259,6 @@ def assemble_series(run: str, manifest: dict, compact_dirs: list[Path], out_dir:
         log(f"{run}: series {sid} {len(gauges)} gauges {n / 1e3:.0f} KB gz in {time.time() - t0:.0f} s")
 
 
-def assemble_ganim(run: str, manifest: dict, compact_dirs: list[Path], out_dir: Path,
-                   sids: list[str] | None, force: bool) -> None:
-    """Hourly surge frames per storm for the in-browser gauge animation.
-
-    Uses the same gauge population as the static surge map (the manifest's
-    surge_gauge_points, already filtered and capped by build_report), reads
-    eta from the compact NetCDF, masks dry steps (eta is topography while a
-    cell is dry), and takes each gauge's last wet reading within each hour.
-    Values are surge anomalies (eta - sl_init) quantized to a byte on the
-    fixed 0..GANIM_SCALE_MAX_M scale; GANIM_NULL means no reading.
-    Incremental: existing files are kept unless --force.
-    """
-    import pandas as pd
-    import xarray as xr
-
-    by_sid: dict[str, Path] = {}
-    for d in compact_dirs:
-        for f in sorted(d.glob("*.nc")):
-            by_sid[f.stem] = f
-    storms = {s["sid"]: s for s in manifest["storms"]}
-    targets = sids or [s["sid"] for s in manifest["storms"] if s.get("surge_gauge_points")]
-
-    done = skipped = 0
-    t_start = time.time()
-    for sid in targets:
-        out = out_dir / "ganim" / f"{sid}.json.gz"
-        if out.exists() and not force:
-            skipped += 1
-            continue
-        s = storms.get(sid)
-        pts = (s or {}).get("surge_gauge_points") or []
-        sl = (s or {}).get("sl_init_m")
-        if not pts or sl is None or sid not in by_sid:
-            continue
-        with xr.open_dataset(by_sid[sid]) as ds:
-            gids = ds["geoclaw_id"].values.astype(str)
-            idx = {g: i for i, g in enumerate(gids)}
-            keep = [p for p in pts if p[3] in idx]
-            cols = [idx[p[3]] for p in keep]
-            eta = ds["eta"].values[:, cols]
-            h = ds["h"].values[:, cols]
-            t = (pd.to_datetime(ds["t"].values).astype("int64") // 10**9).to_numpy()
-        eta = np.where(h > WET_THRESHOLD_M, eta, np.nan)
-
-        t0 = int(t[0] // GANIM_CADENCE_S * GANIM_CADENCE_S)
-        times = list(range(t0 + GANIM_CADENCE_S, int(t[-1]) + GANIM_CADENCE_S, GANIM_CADENCE_S))
-        frames = []
-        for ft in times:
-            window = np.flatnonzero((t > ft - GANIM_CADENCE_S) & (t <= ft))
-            vals = np.full(len(cols), np.nan)
-            for j in window:  # a handful of steps per hour; later steps win
-                row = eta[j]
-                vals = np.where(np.isfinite(row), row, vals)
-            surge = vals - sl
-            q = np.where(
-                np.isfinite(surge),
-                np.clip(np.round(surge / GANIM_SCALE_MAX_M * (GANIM_NULL - 1)), 0, GANIM_NULL - 1),
-                GANIM_NULL,
-            ).astype(int)
-            frames.append([int(v) for v in q])
-        payload = {
-            "sid": sid,
-            "scale_max": GANIM_SCALE_MAX_M,
-            "lon": [round(float(p[0]), 3) for p in keep],
-            "lat": [round(float(p[1]), 3) for p in keep],
-            "times": times,
-            "frames": frames,
-        }
-        n = write_json_gz(out, payload)
-        done += 1
-        log(f"{run}: ganim {sid} {len(keep)} gauges x {len(times)} frames {n / 1e3:.0f} KB gz")
-    if done or skipped:
-        log(f"{run}: ganim {done} exported, {skipped} cached in {time.time() - t_start:.0f} s")
-
-
 def assemble_tracks(manifest: dict, catalogue_name: str, project_root: Path) -> None:
     """Observed IBTrACS tracks for every storm in the manifest (run-independent)."""
     import pandas as pd
@@ -464,9 +380,8 @@ def main() -> int:
     p.add_argument("--anim-dir", help="dir holding <sid>.mp4 pairs and index.json for this run")
     p.add_argument("--compact", help="comma-separated compact dirs, lowest precedence first")
     p.add_argument("--steps", default="manifest,details,anim",
-                   help="comma list of: manifest,details,anim,params,tracks,series,ganim")
+                   help="comma list of: manifest,details,anim,params,tracks,series")
     p.add_argument("--series-sids", default="", help="comma list of sids for the series step")
-    p.add_argument("--ganim-sids", default="", help="restrict the ganim step to these sids")
     p.add_argument("--force", action="store_true", help="recompute params already cached")
     args = p.parse_args()
 
@@ -502,9 +417,6 @@ def main() -> int:
     if "series" in steps:
         sids = [s.strip() for s in args.series_sids.split(",") if s.strip()]
         assemble_series(args.run, manifest, compact_dirs, out_dir, sids)
-    if "ganim" in steps:
-        sids = [s.strip() for s in args.ganim_sids.split(",") if s.strip()] or None
-        assemble_ganim(args.run, manifest, compact_dirs, out_dir, sids, args.force)
     return 0
 
 
