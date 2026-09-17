@@ -393,6 +393,13 @@ function CompareAnims({ projectId, sid, runs, storms, animIdx }: {
 
   return (
     <div>
+      {withMp4.length > 1 && (
+        <p className="callout-warning">
+          ⚠ Colour scales differ between panels: each run's frames were auto-scaled when they
+          were rendered. Compare timing and extent, not colours, until storms are re-rendered
+          with the fixed-scale setplot.
+        </p>
+      )}
       <div className="anim-columns" style={{ "--cols": runs.length } as React.CSSProperties}>
         {runs.map((run) => (
           <div key={run}>
@@ -437,9 +444,7 @@ function CompareAnims({ projectId, sid, runs, storms, animIdx }: {
       )}
       {canSync && (
         <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
-          time is relative to closest approach, common to all runs. Colour scales are each run's
-          own (auto-scaled when the frames were rendered), so colours are not comparable across
-          panels until storms are re-rendered with the fixed-scale setplot.
+          time is relative to closest approach, common to all runs
         </div>
       )}
     </div>

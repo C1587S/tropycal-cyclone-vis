@@ -515,6 +515,15 @@ a:hover {
   color: var(--text-secondary);
 }
 
+.callout-warning {
+  border: 1px solid color-mix(in srgb, var(--status-serious) 55%, var(--baseline));
+  background: color-mix(in srgb, var(--status-serious) 10%, var(--surface-1));
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+
 .notice {
   border: 1px dashed var(--baseline);
   border-radius: 8px;
