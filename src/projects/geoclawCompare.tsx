@@ -16,6 +16,7 @@ import {
   type Track,
 } from "../lib/data";
 import { fmtCount, fmtMem, fmtMeters, fmtRelHours, fmtRuntime, fmtWhen } from "../lib/format";
+import { panelSeekTime, panelVideos, type PanelVideo } from "../lib/panels";
 import { BLUE_RAMP, DIVERGING_RAMP, seriesColor } from "../lib/palette";
 import type { CompareBodyProps } from "./types";
 
@@ -329,7 +330,8 @@ function CompareMap({ runs, storms, details, track, windows }: {
 
 /** The same moment across runs: one slider on the simulation clock
  * (seconds relative to closest approach, identical across runs) drives
- * every run's animation column. */
+ * every run's animation column. Columns are runs; the panel selection
+ * applies to all of them, so each column stacks the same chosen panels. */
 function CompareAnims({ projectId, sid, runs, storms, animIdx }: {
   projectId: string;
   sid: string;
@@ -340,19 +342,36 @@ function CompareAnims({ projectId, sid, runs, storms, animIdx }: {
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   const [i, setI] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [selected, setSelected] = useState<string[]>(["main"]);
 
-  const withMp4 = useMemo(() => runs.filter((r) => storms[r]?.has_mp4), [runs, storms]);
-  const entries = useMemo(() => {
-    const out: Record<string, AnimEntry | undefined> = {};
-    for (const run of withMp4) out[run] = animIdx[run]?.[sid];
+  const perRun = useMemo(() => {
+    const out: Record<string, { entry?: AnimEntry; videos: PanelVideo[] }> = {};
+    for (const run of runs) {
+      const entry = animIdx[run]?.[sid];
+      out[run] = {
+        entry,
+        videos: panelVideos(entry, !!storms[run]?.has_mp4, !!storms[run]?.has_domain_mp4),
+      };
+    }
     return out;
-  }, [withMp4, animIdx, sid]);
+  }, [runs, animIdx, sid, storms]);
+
+  const withVideos = useMemo(() => runs.filter((r) => perRun[r].videos.length), [runs, perRun]);
+
+  // the panel choice spans runs: offer the union, keyed identically everywhere
+  const panelOptions = useMemo(() => {
+    const seen = new Map<string, PanelVideo>();
+    for (const run of withVideos) {
+      for (const v of perRun[run].videos) if (!seen.has(v.key)) seen.set(v.key, v);
+    }
+    return [...seen.values()];
+  }, [withVideos, perRun]);
 
   const masterTimes = useMemo(() => {
     const all = new Set<number>();
-    for (const run of withMp4) for (const t of entries[run]?.times ?? []) all.add(t);
+    for (const run of withVideos) for (const t of perRun[run].entry?.times ?? []) all.add(t);
     return [...all].sort((a, b) => a - b);
-  }, [withMp4, entries]);
+  }, [withVideos, perRun]);
 
   // open at closest approach (t = 0), not at the start of the window: the
   // first frames are open ocean days before anything happens
@@ -374,72 +393,110 @@ function CompareAnims({ projectId, sid, runs, storms, animIdx }: {
   useEffect(() => {
     const T = masterTimes[i];
     if (T == null) return;
-    for (const run of withMp4) {
-      const e = entries[run];
-      const v = videoRefs.current[run];
-      if (!e?.times?.length || !v) continue;
+    for (const run of withVideos) {
+      const { entry, videos } = perRun[run];
+      const times = entry?.times;
+      if (!times?.length) continue;
       let idx = -1;
-      for (let j = 0; j < e.times.length && e.times[j] <= T; j++) idx = j;
-      const mainFrame = idx - (e.dropped ?? 0);
-      v.currentTime = mainFrame >= 0 ? (Math.min(mainFrame, (e.frames ?? 1) - 1) + 0.5) / e.fps : 0;
+      for (let j = 0; j < times.length && times[j] <= T; j++) idx = j;
+      for (const v of videos) {
+        if (!selected.includes(v.key)) continue;
+        const el = videoRefs.current[`${run}:${v.key}`];
+        const t = panelSeekTime(entry, v, idx);
+        if (el && t != null) el.currentTime = t;
+      }
     }
-  }, [i, masterTimes, withMp4, entries]);
+  }, [i, masterTimes, withVideos, perRun, selected]);
 
-  if (!withMp4.length) {
+  if (!withVideos.length) {
     return <p className="notice">None of the selected runs has an animation for this storm.</p>;
   }
 
-  const canSync = masterTimes.length > 1 && withMp4.some((r) => entries[r]?.times?.length);
+  const toggle = (key: string) => {
+    setSelected((prev) => {
+      if (prev.includes(key)) {
+        return prev.length > 1 ? prev.filter((k) => k !== key) : prev;
+      }
+      return panelOptions.map((v) => v.key).filter((k) => prev.includes(k) || k === key);
+    });
+  };
+
+  const canSync = masterTimes.length > 1;
+  // legacy entries (no panels block) were rendered with per-run auto-scaled
+  // colorbars; the fixed-scale warning applies only while one is on screen
+  const anyAutoScaled = withVideos.some((run) => !perRun[run].videos.some((v) => v.fixedScale));
 
   return (
     <div>
-      {withMp4.length > 1 && (
+      {withVideos.length > 1 && anyAutoScaled && (
         <p className="callout-warning">
           ⚠ Colour scales differ between panels: each run's frames were auto-scaled when they
           were rendered. Compare timing and extent, not colours, until storms are re-rendered
           with the fixed-scale setplot.
         </p>
       )}
+      {panelOptions.length > 1 && (
+        <div className="seg-group wrap" role="group" aria-label="panels" style={{ marginBottom: 10 }}>
+          {panelOptions.map((v) => (
+            <button key={v.key} className={selected.includes(v.key) ? "active" : ""} onClick={() => toggle(v.key)}>
+              {v.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="anim-columns" style={{ "--cols": runs.length } as React.CSSProperties}>
-        {runs.map((run) => (
-          <div key={run}>
-            <div className="secondary" style={{ fontWeight: 600, marginBottom: 6 }}>
-              {run}
+        {runs.map((run) => {
+          const { videos } = perRun[run];
+          const shown = videos.filter((v) => selected.includes(v.key));
+          return (
+            <div key={run}>
+              <div className="secondary" style={{ fontWeight: 600, marginBottom: 6 }}>
+                {run}
+              </div>
+              {videos.length === 0 && <p className="notice">No animation in this run.</p>}
+              {videos.length > 0 && shown.length === 0 && (
+                <p className="notice">Selected panels are not rendered in this run.</p>
+              )}
+              {shown.map((v) => (
+                <div key={v.key} style={{ marginBottom: 8 }}>
+                  {selected.length > 1 && (
+                    <div className="muted" style={{ fontSize: 11, marginBottom: 3 }}>
+                      {v.label}
+                    </div>
+                  )}
+                  <video
+                    ref={(el) => {
+                      videoRefs.current[`${run}:${v.key}`] = el;
+                    }}
+                    src={animUrl(projectId, run, sid, v.suffix)}
+                    muted
+                    playsInline
+                    preload="auto"
+                    controls={!canSync}
+                    style={{ width: "100%", borderRadius: 6, background: "#000" }}
+                  />
+                </div>
+              ))}
             </div>
-            {storms[run]?.has_mp4 ? (
-              <video
-                ref={(el) => {
-                  videoRefs.current[run] = el;
-                }}
-                src={animUrl(projectId, run, sid)}
-                muted
-                playsInline
-                preload="auto"
-                controls={!canSync}
-                style={{ width: "100%", borderRadius: 6, background: "#000" }}
-              />
-            ) : (
-              <p className="notice">No animation in this run.</p>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
       {canSync && (
         <div className="anim-controls">
           <button className="btn" onClick={() => setPlaying(!playing)} aria-label={playing ? "Pause" : "Play"}>
-            {playing ? "❚❚" : "▶"}
+            {playing ? "\u275a\u275a" : "\u25b6"}
           </button>
           <input
             type="range"
             min={0}
             max={masterTimes.length - 1}
-            value={i}
+            value={Math.min(i, masterTimes.length - 1)}
             onChange={(e) => {
               setPlaying(false);
               setI(Number(e.target.value));
             }}
           />
-          <span className="time-label">{fmtRelHours(masterTimes[i] ?? 0)}</span>
+          <span className="time-label">{fmtRelHours(masterTimes[Math.min(i, masterTimes.length - 1)] ?? 0)}</span>
         </div>
       )}
       {canSync && (

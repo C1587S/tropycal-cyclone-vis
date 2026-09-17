@@ -200,6 +200,13 @@ a:hover {
   background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
+/* storm-page animation panels: wrap grid, panels are peers not columns */
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
 /* one column per compared run: adding a run adds a column, never a grid row */
 .anim-columns {
   display: grid;

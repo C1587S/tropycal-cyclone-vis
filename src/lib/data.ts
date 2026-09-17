@@ -160,6 +160,17 @@ export interface Track {
   points: [number, number, number, number | null, number | null, number | null][];
 }
 
+/** One encoded video of a storm. Keys of AnimEntry.panels are the mp4 name
+ * suffix with underscores stripped ("main" for <sid>.mp4, "wind" for
+ * <sid>_wind.mp4, ...), so the URL is recoverable from the key alone. */
+export interface AnimPanel {
+  fig?: string;
+  panel: string;
+  region: string;
+  frames: number;
+  fps: number;
+}
+
 export interface AnimEntry {
   fps: number;
   frames: number;
@@ -168,7 +179,10 @@ export interface AnimEntry {
   dropped?: number;
   start_t?: number;
   times?: number[];
-  fig?: string;
+  fig?: string | null;
+  /** present only for storms encoded by the multi-panel (fixed-scale)
+   * pipeline; legacy entries carry just the main/domain pair above */
+  panels?: Record<string, AnimPanel>;
 }
 
 export interface StormParams {
@@ -248,8 +262,8 @@ export const getTrack = (project: string, catalogue: string, sid: string) =>
   fetchOptional<Track>(`${project}/catalogues/${catalogue}/tracks/${sid}.json`);
 export const getBasemap = () => fetchJson<Basemap>("basemap.json");
 
-export const animUrl = (project: string, run: string, sid: string, domain = false) =>
-  `${BASE}/${project}/runs/${run}/anim/${sid}${domain ? "_domain" : ""}.mp4`;
+export const animUrl = (project: string, run: string, sid: string, suffix = "") =>
+  `${BASE}/${project}/runs/${run}/anim/${sid}${suffix}.mp4`;
 
 /** Catalogue name from a manifest's absolute catalogue path. */
 export function catalogueName(cataloguePath: string): string {

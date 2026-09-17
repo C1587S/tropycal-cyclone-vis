@@ -292,11 +292,6 @@ function NotTriggeredCard({ storm, track, params }: {
   ].filter((k) => gate[k] !== undefined);
   return (
     <div>
-      <p style={{ marginTop: 0 }}>
-        Before simulating, the pipeline scans the observed track for a window where the storm is
-        close enough to the region at sufficient intensity. For this storm that scan found no
-        window, so GeoClaw never ran: there is no surge, no gauges, no animation.
-      </p>
       <table className="kv-table">
         <tbody>
           <Row k="observed track points" v={fmtCount(storm.numobs)} />
