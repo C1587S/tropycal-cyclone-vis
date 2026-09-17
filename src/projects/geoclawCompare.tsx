@@ -1,18 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { StatusChip } from "../components/StatusChip";
 import { StormMap, type MapPointLayer } from "../components/StormMap";
 import {
+  animUrl,
   catalogueName,
+  getAnimIndex,
   getParams,
   getStormDetail,
   getTrack,
+  type AnimEntry,
+  type GaugePoint,
   type StormDetail,
   type StormParams,
   type StormRec,
   type Track,
 } from "../lib/data";
-import { fmtCount, fmtMem, fmtMeters, fmtRuntime, fmtWhen } from "../lib/format";
-import { BLUE_RAMP, ORANGE_RAMP, seriesColor } from "../lib/palette";
+import { fmtCount, fmtMem, fmtMeters, fmtRelHours, fmtRuntime, fmtWhen } from "../lib/format";
+import { BLUE_RAMP, DIVERGING_RAMP, seriesColor } from "../lib/palette";
 import type { CompareBodyProps } from "./types";
 
 interface MetricRow {
@@ -59,12 +63,28 @@ const ROWS: MetricRow[] = [
   { label: "slurm array", value: (s) => (s.array_job ? `${s.array_job}[${s.array_index}]` : "–"), raw: (s) => s.array_job ?? "" },
 ];
 
-/** One storm, several runs: numbers in one table, surge maps side by side,
- * simulated windows overlaid on the shared observed track, and the config
- * diff — the view that shows what a configuration change did. */
+/** Per-gauge surge difference between two runs, joined on the gauge id
+ * (gauge placement is deterministic, so ids are stable across runs). Only
+ * gauges present in both runs' exported point sets contribute. */
+function diffPoints(a?: GaugePoint[], b?: GaugePoint[]): GaugePoint[] {
+  if (!a?.length || !b?.length) return [];
+  const byId = new Map(a.map((p) => [p[3], p[2]]));
+  const out: GaugePoint[] = [];
+  for (const p of b) {
+    const va = byId.get(p[3]);
+    if (va !== undefined) out.push([p[0], p[1], +(p[2] - va).toFixed(3), p[3]]);
+  }
+  return out;
+}
+
+/** One storm, several runs: numbers in one table, all runs' surge on one
+ * map (per-run layers plus per-gauge difference layers), simulated windows
+ * overlaid on the shared observed track, animations synchronised on the
+ * simulation clock, and the config diff. */
 export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareBodyProps) {
   const [details, setDetails] = useState<Record<string, StormDetail | null>>({});
   const [params, setParams] = useState<Record<string, Record<string, StormParams> | null>>({});
+  const [animIdx, setAnimIdx] = useState<Record<string, Record<string, AnimEntry> | null>>({});
   const [track, setTrack] = useState<Track | null>();
   const [allParams, setAllParams] = useState(false);
 
@@ -79,8 +99,11 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
       if (params[run] === undefined) {
         getParams(projectId, run).then((p) => setParams((prev) => ({ ...prev, [run]: p })));
       }
+      if (animIdx[run] === undefined) {
+        getAnimIndex(projectId, run).then((a) => setAnimIdx((prev) => ({ ...prev, [run]: a })));
+      }
     }
-  }, [projectId, sid, runs, details, params]);
+  }, [projectId, sid, runs, details, params, animIdx]);
 
   useEffect(() => {
     const first = runs.find((r) => manifests[r]);
@@ -178,43 +201,14 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
         </div>
       </div>
 
-      <div className="compare-maps section">
-        {runs.map((run) => {
-          const s = storms[run];
-          const d = details[run];
-          const layers: MapPointLayer[] = [
-            {
-              key: "surge",
-              label: "surge",
-              points: d?.surge_gauge_points ?? [],
-              total: s?.n_surge_points_total,
-              ramp: BLUE_RAMP,
-              caption: "peak surge",
-            },
-            {
-              key: "depth",
-              label: "depth",
-              points: d?.wet_gauge_points ?? [],
-              total: s?.wet_gauges,
-              ramp: ORANGE_RAMP,
-              caption: "peak depth",
-            },
-          ];
-          const windowT: [number, number] | null =
-            s?.t_start && s?.t_end
-              ? [Date.parse(s.t_start + "Z") / 1000, Date.parse(s.t_end + "Z") / 1000]
-              : null;
-          return (
-            <div className="card" key={run}>
-              <h2>{run}</h2>
-              {s ? (
-                <StormMap layers={layers} context={d?.dry} track={track} windowT={windowT} />
-              ) : (
-                <p className="notice">Storm not in this run.</p>
-              )}
-            </div>
-          );
-        })}
+      <div className="card section">
+        <h2>Surge in one frame</h2>
+        <CompareMap runs={runs} storms={storms} details={details} track={track} />
+      </div>
+
+      <div className="card section">
+        <h2>Animations — synchronised on the simulation clock</h2>
+        <CompareAnims projectId={projectId} sid={sid} runs={runs} storms={storms} animIdx={animIdx} />
       </div>
 
       <div className="card section">
@@ -258,5 +252,162 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
         </div>
       </div>
     </>
+  );
+}
+
+/** All runs' peak surge on one map: a layer per run on a shared color
+ * scale, plus a per-gauge difference layer for each adjacent pair of
+ * selected runs on a diverging scale. */
+function CompareMap({ runs, storms, details, track }: {
+  runs: string[];
+  storms: Record<string, StormRec | undefined>;
+  details: Record<string, StormDetail | null>;
+  track?: Track | null;
+}) {
+  const layers = useMemo<MapPointLayer[]>(() => {
+    const sharedMax = Math.max(
+      0.1,
+      ...runs.flatMap((run) => (details[run]?.surge_gauge_points ?? []).map((p) => p[2])),
+    );
+    const runLayers: MapPointLayer[] = runs.map((run) => ({
+      key: run,
+      label: run,
+      points: details[run]?.surge_gauge_points ?? [],
+      total: storms[run]?.n_surge_points_total,
+      ramp: BLUE_RAMP,
+      scaleMax: sharedMax,
+      caption: `peak surge in ${run} — color scale shared across runs`,
+    }));
+    const deltaLayers: MapPointLayer[] = [];
+    for (let i = 1; i < runs.length; i++) {
+      const a = runs[i - 1];
+      const b = runs[i];
+      const pts = diffPoints(details[a]?.surge_gauge_points, details[b]?.surge_gauge_points);
+      if (!pts.length) continue;
+      const dmax = Math.max(0.1, ...pts.map((p) => Math.abs(p[2])));
+      deltaLayers.push({
+        key: `delta-${i}`,
+        label: `Δ ${b} − ${a}`,
+        points: pts,
+        ramp: DIVERGING_RAMP,
+        diverging: true,
+        scaleMax: dmax,
+        caption: `surge difference at the ${pts.length.toLocaleString()} gauges present in both exports (red: higher in ${b})`,
+      });
+    }
+    return [...runLayers, ...deltaLayers];
+  }, [runs, storms, details]);
+
+  return <StormMap layers={layers} track={track} />;
+}
+
+/** The same moment across runs: one slider on the simulation clock
+ * (seconds relative to closest approach, identical across runs) drives
+ * every run's animation column. */
+function CompareAnims({ projectId, sid, runs, storms, animIdx }: {
+  projectId: string;
+  sid: string;
+  runs: string[];
+  storms: Record<string, StormRec | undefined>;
+  animIdx: Record<string, Record<string, AnimEntry> | null>;
+}) {
+  const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
+  const [i, setI] = useState(0);
+  const [playing, setPlaying] = useState(false);
+
+  const withMp4 = useMemo(() => runs.filter((r) => storms[r]?.has_mp4), [runs, storms]);
+  const entries = useMemo(() => {
+    const out: Record<string, AnimEntry | undefined> = {};
+    for (const run of withMp4) out[run] = animIdx[run]?.[sid];
+    return out;
+  }, [withMp4, animIdx, sid]);
+
+  const masterTimes = useMemo(() => {
+    const all = new Set<number>();
+    for (const run of withMp4) for (const t of entries[run]?.times ?? []) all.add(t);
+    return [...all].sort((a, b) => a - b);
+  }, [withMp4, entries]);
+
+  useEffect(() => {
+    setI(0);
+    setPlaying(false);
+  }, [sid, masterTimes.length]);
+
+  useEffect(() => {
+    if (!playing || masterTimes.length < 2) return;
+    const id = setInterval(() => setI((v) => (v + 1) % masterTimes.length), 300);
+    return () => clearInterval(id);
+  }, [playing, masterTimes.length]);
+
+  useEffect(() => {
+    const T = masterTimes[i];
+    if (T == null) return;
+    for (const run of withMp4) {
+      const e = entries[run];
+      const v = videoRefs.current[run];
+      if (!e?.times?.length || !v) continue;
+      let idx = -1;
+      for (let j = 0; j < e.times.length && e.times[j] <= T; j++) idx = j;
+      const mainFrame = idx - (e.dropped ?? 0);
+      v.currentTime = mainFrame >= 0 ? (Math.min(mainFrame, (e.frames ?? 1) - 1) + 0.5) / e.fps : 0;
+    }
+  }, [i, masterTimes, withMp4, entries]);
+
+  if (!withMp4.length) {
+    return <p className="notice">None of the selected runs has an animation for this storm.</p>;
+  }
+
+  const canSync = masterTimes.length > 1 && withMp4.some((r) => entries[r]?.times?.length);
+
+  return (
+    <div>
+      <div className="compare-maps">
+        {runs.map((run) => (
+          <div key={run}>
+            <div className="secondary" style={{ fontWeight: 600, marginBottom: 6 }}>
+              {run}
+            </div>
+            {storms[run]?.has_mp4 ? (
+              <video
+                ref={(el) => {
+                  videoRefs.current[run] = el;
+                }}
+                src={animUrl(projectId, run, sid)}
+                muted
+                playsInline
+                preload="auto"
+                controls={!canSync}
+                style={{ width: "100%", borderRadius: 6, background: "#000" }}
+              />
+            ) : (
+              <p className="notice">No animation in this run.</p>
+            )}
+          </div>
+        ))}
+      </div>
+      {canSync && (
+        <div className="anim-controls">
+          <button className="btn" onClick={() => setPlaying(!playing)} aria-label={playing ? "Pause" : "Play"}>
+            {playing ? "❚❚" : "▶"}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={masterTimes.length - 1}
+            value={i}
+            onChange={(e) => {
+              setPlaying(false);
+              setI(Number(e.target.value));
+            }}
+          />
+          <span className="time-label">{fmtRelHours(masterTimes[i] ?? 0)}</span>
+        </div>
+      )}
+      {canSync && (
+        <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+          time is relative to closest approach, common to all runs
+        </div>
+      )}
+    </div>
   );
 }

@@ -14,6 +14,11 @@ export interface MapPointLayer {
   total?: number;
   ramp: string[];
   caption: string;
+  /** fixed top of the color scale (e.g. shared across compared runs);
+   * defaults to the layer's own max */
+  scaleMax?: number;
+  /** signed values on a diverging ramp over [-scaleMax, +scaleMax] */
+  diverging?: boolean;
 }
 
 interface Props {
@@ -67,11 +72,11 @@ function dotsToGeojson(points: [number, number][]): GeoJSON.FeatureCollection {
   };
 }
 
-/** Color stops for a data-driven circle color over [0, max]. */
-function rampStops(ramp: string[], max: number): (number | string)[] {
+/** Color stops for a data-driven circle color over [min, max]. */
+function rampStops(ramp: string[], min: number, max: number): (number | string)[] {
   const out: (number | string)[] = [];
   ramp.forEach((hex, i) => {
-    out.push((i / (ramp.length - 1)) * max, hex);
+    out.push(min + (i / (ramp.length - 1)) * (max - min), hex);
   });
   return out;
 }
@@ -146,7 +151,9 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
 
   const active = layers.find((l) => l.key === layerKey) ?? layers[0];
   const points = active?.points ?? [];
-  const maxVal = useMemo(() => Math.max(0.1, ...points.map((p) => p[2])), [points]);
+  const computedMax = useMemo(() => Math.max(0.1, ...points.map((p) => Math.abs(p[2]))), [points]);
+  const scaleTop = active?.scaleMax ?? computedMax;
+  const scaleMin = active?.diverging ? -scaleTop : 0;
 
   useEffect(() => {
     if (!containerRef.current || !style || mapRef.current) return;
@@ -265,8 +272,15 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
         type: "circle",
         source: "gauges",
         paint: {
-          "circle-radius": ["interpolate", ["linear"], ["get", "v"], 0, 2.2, maxVal, 5.5],
-          "circle-color": ["interpolate", ["linear"], ["get", "v"], ...rampStops(active.ramp, maxVal)] as never,
+          "circle-radius": active.diverging
+            ? (["interpolate", ["linear"], ["get", "v"], scaleMin, 5.5, 0, 2.2, scaleTop, 5.5] as never)
+            : (["interpolate", ["linear"], ["get", "v"], 0, 2.2, scaleTop, 5.5] as never),
+          "circle-color": [
+            "interpolate",
+            ["linear"],
+            ["get", "v"],
+            ...rampStops(active.ramp, scaleMin, scaleTop),
+          ] as never,
           "circle-stroke-color": "#fcfcfb",
           "circle-stroke-width": 0.6,
         },
@@ -319,7 +333,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
     };
     recenterRef.current = fit;
     fit();
-  }, [active, context, track, windowT, windows, points, maxVal, ready]);
+  }, [active, context, track, windowT, windows, points, scaleMin, scaleTop, ready]);
 
   if (mapError) {
     return <p className="notice">The map could not initialize (WebGL unavailable): {mapError}</p>;
@@ -344,9 +358,12 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
         )}
         {points.length > 0 && (
           <>
-            <span>0</span>
+            <span>{scaleMin < 0 ? `−${scaleTop.toFixed(1)}` : "0"}</span>
             <div className="ramp" style={{ background: active ? rampCss(active.ramp) : undefined }} />
-            <span>{maxVal.toFixed(1)} m</span>
+            <span>
+              {scaleMin < 0 ? "+" : ""}
+              {scaleTop.toFixed(1)} m
+            </span>
           </>
         )}
         <span className="muted">

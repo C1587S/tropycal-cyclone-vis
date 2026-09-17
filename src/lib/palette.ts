@@ -77,6 +77,19 @@ export const STATUS_LABELS: Record<string, string> = {
 export const statusColor = (s: string) => STATUS_COLORS[s] ?? "#898781";
 export const statusLabel = (s: string) => STATUS_LABELS[s] ?? s;
 
+/** Diverging blue <-> red ramp with a neutral gray midpoint, for signed
+ * differences (run A vs run B). Poles from the reference palette's
+ * diverging pair. */
+export const DIVERGING_RAMP = [
+  "#0d366b",
+  "#2a78d6",
+  "#86b6ef",
+  "#f0efec",
+  "#f0a099",
+  "#e34948",
+  "#7f2626",
+];
+
 /** Sequential blue ramp (magnitude), light -> dark, from the reference palette. */
 export const BLUE_RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
 /** Second sequential context (depth toggle): orange, light -> dark. */
