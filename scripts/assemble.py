@@ -134,7 +134,9 @@ def assemble_anim(run: str, anim_src: Path, out_dir: Path, sids: set[str]) -> No
     write_json(anim_out / "index.json", {k: v for k, v in index.items() if k in sids})
     copied = 0
     for f in sorted(anim_src.glob("*.mp4")):
-        if f.stem.replace("_domain", "") not in sids:
+        # SIDs carry no underscores, so the stem's first token is the SID and
+        # everything after it is the panel suffix (_domain, _wind, ...)
+        if f.stem.split("_", 1)[0] not in sids:
             continue
         dest = anim_out / f.name
         if not dest.exists() or dest.stat().st_size != f.stat().st_size:
