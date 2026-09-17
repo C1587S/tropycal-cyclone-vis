@@ -53,8 +53,10 @@ const ROWS: MetricRow[] = [
   { label: "sl_init", value: (s) => fmtMeters(s.sl_init_m), raw: (s) => fmtMeters(s.sl_init_m) },
   { label: "wet gauges", value: (s) => fmtCount(s.wet_gauges), raw: (s) => String(s.wet_gauges ?? "") },
   { label: "surge gauges", value: (s) => fmtCount(s.n_surge_points_total), raw: (s) => String(s.n_surge_points_total ?? "") },
-  { label: "window start", value: (s) => fmtWhen(s.t_start), raw: (s) => s.t_start ?? "" },
-  { label: "window end", value: (s) => fmtWhen(s.t_end), raw: (s) => s.t_end ?? "" },
+  // raw at displayed (minute) precision: window bounds jitter by a second
+  // or two between runs from output cadence, which is not a difference
+  { label: "window start", value: (s) => fmtWhen(s.t_start), raw: (s) => fmtWhen(s.t_start) },
+  { label: "window end", value: (s) => fmtWhen(s.t_end), raw: (s) => fmtWhen(s.t_end) },
   { label: "timesteps", value: (s) => fmtCount(s.n_timesteps), raw: (s) => String(s.n_timesteps ?? "") },
   { label: "runtime", value: (s) => fmtRuntime(s.runtime_seconds), raw: (s) => fmtRuntime(s.runtime_seconds) },
   { label: "memory", value: (s) => fmtMem(s.memory_mb), raw: (s) => fmtMem(s.memory_mb) },
@@ -189,21 +191,8 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
       </div>
 
       <div className="card section">
-        <h2>Simulated windows on the observed track</h2>
-        <StormMap layers={[]} track={track} windows={windows} />
-        <div className="facts" style={{ marginTop: 8 }}>
-          {windows.map((w) => (
-            <span key={w.label} className="status-chip">
-              <span className="dot" style={{ background: w.color }} />
-              {w.label}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="card section">
         <h2>Surge in one frame</h2>
-        <CompareMap runs={runs} storms={storms} details={details} track={track} />
+        <CompareMap runs={runs} storms={storms} details={details} track={track} windows={windows} />
       </div>
 
       <div className="card section">
@@ -257,13 +246,21 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
 
 /** All runs' peak surge on one map: a layer per run on a shared color
  * scale, plus a per-gauge difference layer for each adjacent pair of
- * selected runs on a diverging scale. */
-function CompareMap({ runs, storms, details, track }: {
+ * selected runs on a diverging scale. The runs' simulated windows draw on
+ * the track here too; identical windows collapse to one segment and a
+ * sentence instead of indistinguishable overlapping lines. */
+function CompareMap({ runs, storms, details, track, windows }: {
   runs: string[];
   storms: Record<string, StormRec | undefined>;
   details: Record<string, StormDetail | null>;
   track?: Track | null;
+  windows: { label: string; color: string; t: [number, number] }[];
 }) {
+  // identical within a minute: window bounds carry seconds-level jitter
+  // from the output cadence that is not a real difference between runs
+  const spread = (i: 0 | 1) =>
+    Math.max(...windows.map((w) => w.t[i])) - Math.min(...windows.map((w) => w.t[i]));
+  const identicalWindows = windows.length > 1 && spread(0) <= 60 && spread(1) <= 60;
   const layers = useMemo<MapPointLayer[]>(() => {
     const sharedMax = Math.max(
       0.1,
@@ -298,7 +295,32 @@ function CompareMap({ runs, storms, details, track }: {
     return [...runLayers, ...deltaLayers];
   }, [runs, storms, details]);
 
-  return <StormMap layers={layers} track={track} />;
+  const first = storms[runs.find((r) => storms[r]) ?? ""];
+
+  return (
+    <div>
+      {identicalWindows || windows.length <= 1 ? (
+        <StormMap layers={layers} track={track} windowT={windows[0]?.t ?? null} />
+      ) : (
+        <StormMap layers={layers} track={track} windows={windows} />
+      )}
+      {identicalWindows && (
+        <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
+          simulated window identical across runs: {fmtWhen(first?.t_start)} to {fmtWhen(first?.t_end)}
+        </p>
+      )}
+      {!identicalWindows && windows.length > 1 && (
+        <div className="facts" style={{ marginTop: 8 }}>
+          {windows.map((w) => (
+            <span key={w.label} className="status-chip">
+              <span className="dot" style={{ background: w.color }} />
+              {w.label} window
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** The same moment across runs: one slider on the simulation clock
