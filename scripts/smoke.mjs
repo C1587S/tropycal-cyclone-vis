@@ -15,6 +15,7 @@ const PAGES = [
   { name: "home", path: "/" },
   { name: "run", path: "/p/geoclaw/run/per_storm_v2" },
   { name: "storm", path: "/p/geoclaw/run/per_storm_v2/storm/2005236N23285" },
+  { name: "compare", path: "/p/geoclaw/compare/2005236N23285?runs=per_storm_v2,per_storm_v3_plus_asym" },
 ];
 
 const browser = await puppeteer.launch({

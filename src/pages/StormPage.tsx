@@ -48,6 +48,11 @@ export function StormPage() {
         <StatusChip status={storm.status} />
         <span className="muted mono">{storm.sid}</span>
         <span style={{ flex: 1 }} />
+        {otherRuns.length > 0 && (
+          <Link className="btn" to={`/p/${projectId}/compare/${sid}`}>
+            compare runs
+          </Link>
+        )}
         {otherRuns.map((r) => (
           <Link key={r} to={`/p/${projectId}/run/${r}/storm/${sid}`} className="status-chip">
             open in {r}

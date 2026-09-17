@@ -24,6 +24,15 @@ export interface StormBodyProps {
   storm: StormRec;
 }
 
+export interface CompareBodyProps {
+  projectId: string;
+  sid: string;
+  /** selected run names, in display order */
+  runs: string[];
+  /** loaded manifests keyed by run name */
+  manifests: Record<string, RunManifest>;
+}
+
 /** Everything project-specific the generic pages need: the metric vocabulary
  * of the run table and tiles, and the storm page body. The shell — project /
  * run / storm navigation, filtering, sorting, cross-run links — is shared. */
@@ -34,4 +43,6 @@ export interface ProjectView {
   /** default sort column for the storm table */
   defaultSort: keyof StormRec;
   StormBody: (props: StormBodyProps) => ReactNode;
+  /** side-by-side view of one storm across runs */
+  CompareBody?: (props: CompareBodyProps) => ReactNode;
 }

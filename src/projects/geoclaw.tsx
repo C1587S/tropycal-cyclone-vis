@@ -19,6 +19,7 @@ import {
 } from "../lib/data";
 import { fmtCount, fmtMem, fmtMeters, fmtRuntime, fmtWhen } from "../lib/format";
 import { BLUE_RAMP, ORANGE_RAMP } from "../lib/palette";
+import { GeoclawCompareBody } from "./geoclawCompare";
 import type { ProjectView, StormBodyProps } from "./types";
 
 /** GeoClaw storm surge: the project's metric vocabulary and storm page. */
@@ -56,6 +57,7 @@ export const geoclaw: ProjectView = {
   defaultSort: "peak_surge_m",
 
   StormBody: GeoclawStormBody,
+  CompareBody: GeoclawCompareBody,
 };
 
 function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyProps) {
@@ -114,11 +116,7 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
           <div className="value">{fmtMeters(storm.peak_surge_m)}</div>
           <div className="detail">{fmtWhen(storm.peak_surge_time)}</div>
         </div>
-        <div className="tile">
-          <div className="label">Peak depth</div>
-          <div className="value">{fmtMeters(storm.peak_depth_m)}</div>
-          <div className="detail">raw {fmtMeters(storm.raw_peak_depth_m)}</div>
-        </div>
+        <PeakDepthTile storm={storm} />
         <div className="tile">
           <div className="label">sl_init</div>
           <div className="value">{fmtMeters(storm.sl_init_m)}</div>
@@ -215,6 +213,10 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
                 k="excluded land gauges"
                 v={`${fmtCount(storm.n_excluded_gauges)} (${((storm.excluded_fraction ?? 0) * 100).toFixed(1)} %)`}
               />
+              <Row
+                k="peak-depth cell elevation at peak"
+                v={storm.peak_gauge?.b_at_peak_m != null ? `${storm.peak_gauge.b_at_peak_m.toFixed(2)} m` : "–"}
+              />
               <Row k="NaN fraction" v={storm.nan_fraction != null ? storm.nan_fraction.toFixed(4) : "–"} />
               <Row k="coarse only (AMR never refined)" v={storm.coarse_only ? "yes" : "no"} />
               <Row k="outlier flag" v={storm.outlier_flag ? "yes" : "no"} />
@@ -229,6 +231,41 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
         </div>
       </div>
     </>
+  );
+}
+
+/** Peak inundation depth, with a caution when the number is suspect.
+ *
+ * build_report.py's peak_depth_m excludes land gauges only when their
+ * reporting cell at peak sits more than 5 m below sea level (DEEP_CELL_M).
+ * A cell a few meters below MSL passes that filter, and h then includes the
+ * sub-sea-level water column — Katrina's 9.05 m headline comes from a cell
+ * at -4.68 m whose actual water surface is at 4.37 m. Until the metric is
+ * revised upstream, flag any peak whose reporting cell sits more than 1 m
+ * below MSL (the same tolerance the ocean-side guard uses). */
+function PeakDepthTile({ storm }: { storm: StormBodyProps["storm"] }) {
+  const cellB = storm.peak_gauge?.b_at_peak_m;
+  const suspect = cellB != null && cellB < -1.0;
+  return (
+    <div className="tile">
+      <div className="label">Peak depth</div>
+      <div className="value">
+        {fmtMeters(storm.peak_depth_m)}
+        {suspect && (
+          <span
+            title="The reporting cell sits below sea level at peak, so this depth includes sub-sea-level water column"
+            style={{ color: "#ec835a", marginLeft: 6, fontSize: 15 }}
+          >
+            ⚠ suspect
+          </span>
+        )}
+      </div>
+      <div className="detail">
+        {suspect
+          ? `cell ${Math.abs(cellB).toFixed(1)} m below MSL at peak · surface at ${fmtMeters(storm.peak_gauge?.eta_at_peak_m)} · raw ${fmtMeters(storm.raw_peak_depth_m)}`
+          : `raw ${fmtMeters(storm.raw_peak_depth_m)}`}
+      </div>
+    </div>
   );
 }
 

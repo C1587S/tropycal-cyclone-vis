@@ -23,6 +23,9 @@ interface Props {
   track?: Track | null;
   /** simulated window as epoch seconds; highlights that segment of the track */
   windowT?: [number, number] | null;
+  /** several simulated windows overlaid in distinct colors (run comparison);
+   * takes precedence over windowT */
+  windows?: { label: string; color: string; t: [number, number] }[];
 }
 
 /** World basemap with land, admin borders, state names and city labels.
@@ -128,7 +131,7 @@ class RecenterControl implements maplibregl.IControl {
 
 /** MapLibre map of one storm: selectable point overlays and the observed
  * track (simulated window highlighted) over a world basemap. */
-export function StormMap({ layers, context, track, windowT }: Props) {
+export function StormMap({ layers, context, track, windowT, windows }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map>();
   const recenterRef = useRef<() => void>(() => undefined);
@@ -180,7 +183,9 @@ export function StormMap({ layers, context, track, windowT }: Props) {
     if (!map || !ready || !active) return;
     const t = chartTheme();
 
-    for (const id of ["context", "gauges", "track-full", "track-sim"]) {
+    const oldIds = ["context", "gauges", "track-full", "track-sim"];
+    for (let i = 0; i < 8; i++) oldIds.push(`track-win-${i}`);
+    for (const id of oldIds) {
       if (map.getLayer(id)) map.removeLayer(id);
       if (map.getSource(id)) map.removeSource(id);
     }
@@ -207,7 +212,32 @@ export function StormMap({ layers, context, track, windowT }: Props) {
         source: "track-full",
         paint: { "line-color": t.textMuted, "line-width": 1.4, "line-dasharray": [2, 2] },
       });
-      if (windowT) {
+      if (windows?.length) {
+        windows.forEach((w, i) => {
+          const sim = track.points.filter((p) => p[0] >= w.t[0] && p[0] <= w.t[1]);
+          if (sim.length < 2) return;
+          const id = `track-win-${i}`;
+          map.addSource(id, {
+            type: "geojson",
+            data: {
+              type: "Feature",
+              properties: {},
+              geometry: { type: "LineString", coordinates: sim.map((p) => [p[1], p[2]]) },
+            },
+          });
+          // stagger widths so identical windows remain distinguishable
+          map.addLayer({
+            id,
+            type: "line",
+            source: id,
+            paint: {
+              "line-color": w.color,
+              "line-width": 2 + (windows.length - 1 - i) * 2.4,
+              "line-opacity": 0.9,
+            },
+          });
+        });
+      } else if (windowT) {
         const sim = track.points.filter((p) => p[0] >= windowT[0] && p[0] <= windowT[1]);
         if (sim.length > 1) {
           map.addSource("track-sim", {
@@ -289,7 +319,7 @@ export function StormMap({ layers, context, track, windowT }: Props) {
     };
     recenterRef.current = fit;
     fit();
-  }, [active, context, track, windowT, points, maxVal, ready]);
+  }, [active, context, track, windowT, windows, points, maxVal, ready]);
 
   if (mapError) {
     return <p className="notice">The map could not initialize (WebGL unavailable): {mapError}</p>;
@@ -324,7 +354,9 @@ export function StormMap({ layers, context, track, windowT }: Props) {
           {active?.total != null && active.total > points.length
             ? ` · showing the ${points.length.toLocaleString()} highest of ${active.total.toLocaleString()} gauges`
             : ""}
-          {track ? `${points.length ? " · " : ""}dashed: observed track, solid: simulated window` : ""}
+          {track
+            ? `${points.length ? " · " : ""}dashed: observed track, solid: simulated window${windows?.length ? "s" : ""}`
+            : ""}
         </span>
       </div>
     </div>

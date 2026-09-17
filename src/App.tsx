@@ -1,4 +1,5 @@
 import { Link, Navigate, Route, Routes, useParams } from "react-router-dom";
+import { ComparePage } from "./pages/ComparePage";
 import { HomePage } from "./pages/HomePage";
 import { RunPage } from "./pages/RunPage";
 import { StormPage } from "./pages/StormPage";
@@ -47,6 +48,7 @@ export function App() {
       <Route path="/" element={<Shell><HomePage /></Shell>} />
       <Route path="/p/:projectId/run/:runId" element={<Shell><RunPage /></Shell>} />
       <Route path="/p/:projectId/run/:runId/storm/:sid" element={<Shell><StormPage /></Shell>} />
+      <Route path="/p/:projectId/compare/:sid" element={<Shell><ComparePage /></Shell>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

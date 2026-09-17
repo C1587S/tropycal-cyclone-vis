@@ -15,6 +15,7 @@ export interface ChartTheme {
   series1: string;
   series2: string;
   series3: string;
+  series4: string;
 }
 
 const LIGHT: ChartTheme = {
@@ -28,6 +29,7 @@ const LIGHT: ChartTheme = {
   series1: "#2a78d6",
   series2: "#eb6834",
   series3: "#1baf7a",
+  series4: "#eda100",
 };
 
 const DARK: ChartTheme = {
@@ -41,7 +43,14 @@ const DARK: ChartTheme = {
   series1: "#3987e5",
   series2: "#d95926",
   series3: "#199e70",
+  series4: "#c98500",
 };
+
+/** Categorical hue per index, fixed order (e.g. one color per run). */
+export function seriesColor(i: number): string {
+  const t = chartTheme();
+  return [t.series1, t.series2, t.series3, t.series4][i % 4];
+}
 
 export const chartTheme = (): ChartTheme => (dark() ? DARK : LIGHT);
 
