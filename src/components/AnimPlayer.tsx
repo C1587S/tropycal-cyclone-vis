@@ -29,10 +29,18 @@ export function AnimPlayer({ project, run, sid, entry, hasMp4, hasDomainMp4 }: P
   const nFrames = canSync ? entry!.domain_frames ?? entry!.times!.length : entry?.frames ?? 0;
   const dropped = entry?.dropped ?? 0;
 
+  // open at closest approach (t = 0), not at the start of the window
   useEffect(() => {
-    setFrame(0);
+    const times = entry?.times;
+    let best = 0;
+    if (times?.length) {
+      for (let j = 1; j < times.length; j++) {
+        if (Math.abs(times[j]) < Math.abs(times[best])) best = j;
+      }
+    }
+    setFrame(best);
     setPlaying(false);
-  }, [project, run, sid]);
+  }, [project, run, sid, entry]);
 
   useEffect(() => {
     if (!playing) return;

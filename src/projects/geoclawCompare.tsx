@@ -354,10 +354,16 @@ function CompareAnims({ projectId, sid, runs, storms, animIdx }: {
     return [...all].sort((a, b) => a - b);
   }, [withMp4, entries]);
 
+  // open at closest approach (t = 0), not at the start of the window: the
+  // first frames are open ocean days before anything happens
   useEffect(() => {
-    setI(0);
+    let best = 0;
+    for (let j = 1; j < masterTimes.length; j++) {
+      if (Math.abs(masterTimes[j]) < Math.abs(masterTimes[best])) best = j;
+    }
+    setI(best);
     setPlaying(false);
-  }, [sid, masterTimes.length]);
+  }, [sid, masterTimes]);
 
   useEffect(() => {
     if (!playing || masterTimes.length < 2) return;
@@ -431,7 +437,9 @@ function CompareAnims({ projectId, sid, runs, storms, animIdx }: {
       )}
       {canSync && (
         <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
-          time is relative to closest approach, common to all runs
+          time is relative to closest approach, common to all runs. Colour scales are each run's
+          own (auto-scaled when the frames were rendered), so colours are not comparable across
+          panels until storms are re-rendered with the fixed-scale setplot.
         </div>
       )}
     </div>
