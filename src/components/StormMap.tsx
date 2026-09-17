@@ -81,12 +81,13 @@ function rampStops(ramp: string[], min: number, max: number): (number | string)[
   return out;
 }
 
-function layerLabel(l: MapPointLayer): string {
-  if (!l.points.length) return l.label;
+/** The count detail shown under a layer button's name. */
+function layerSub(l: MapPointLayer): string | null {
+  if (!l.points.length) return null;
   if (l.total != null && l.total > l.points.length) {
-    return `${l.label} (top ${l.points.length.toLocaleString()} of ${l.total.toLocaleString()})`;
+    return `top ${l.points.length.toLocaleString()} of ${l.total.toLocaleString()}`;
   }
-  return `${l.label} (${l.points.length.toLocaleString()})`;
+  return l.points.length.toLocaleString();
 }
 
 async function resolveStyle(): Promise<maplibregl.StyleSpecification> {
@@ -344,14 +345,15 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
       <div ref={containerRef} className="map-container" />
       <div className="map-legend">
         {layers.length > 1 && layers.some((l) => l.points.length > 0) && (
-          <div className="seg-group" role="group" aria-label="map metric">
+          <div className="seg-group wrap" role="group" aria-label="map metric">
             {layers.map((l) => (
               <button
                 key={l.key}
                 className={active?.key === l.key ? "active" : ""}
                 onClick={() => setLayerKey(l.key)}
               >
-                {layerLabel(l)}
+                {l.label}
+                {layerSub(l) && <span className="sub">{layerSub(l)}</span>}
               </button>
             ))}
           </div>

@@ -87,7 +87,7 @@ export function SeriesChart({ series }: { series: StormSeries }) {
       </div>
       <EChart option={option} height={260} />
       <div className="muted" style={{ fontSize: 11 }}>
-        gauge {gauge.id} at ({gauge.lon.toFixed(2)}, {gauge.lat.toFixed(2)}) — top gauges ranked by peak{" "}
+        gauge {gauge.id} at ({gauge.lon.toFixed(2)}, {gauge.lat.toFixed(2)}), top gauges ranked by peak{" "}
         {gauge.kind}
       </div>
     </div>

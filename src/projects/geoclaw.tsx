@@ -150,7 +150,7 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
       {notTriggered ? (
         <div className="storm-grid section">
           <div className="card">
-            <h2>Track — not simulated</h2>
+            <h2>Track (not simulated)</h2>
             <StormMap layers={mapLayers} context={detail?.dry} track={track} windowT={windowT} />
           </div>
           <div className="card">
@@ -184,8 +184,8 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
           {series === undefined && <p className="muted">Loading series…</p>}
           {series === null && (
             <p className="notice">
-              Gauge time series not exported for this storm yet — run scripts/assemble.py with
-              --steps series --series-sids {sid}.
+              Gauge time series not exported for this storm yet (run scripts/assemble.py with
+              --steps series --series-sids {sid}).
             </p>
           )}
           {series && <SeriesChart series={series} />}

@@ -162,7 +162,7 @@ function MetricChart({ title, storms, value, fmt, bins, colorKey, stormUrl }: {
         axisLabel: { show: false },
         axisLine: axis.axisLine,
         axisTick: { show: false },
-        name: `storms, largest first — click to open`,
+        name: `storms, largest first (click to open)`,
         nameLocation: "middle",
         nameGap: 12,
         nameTextStyle: { color: t.textMuted, fontSize: 11 },

@@ -207,7 +207,7 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
       </div>
 
       <div className="card section">
-        <h2>Animations — synchronised on the simulation clock</h2>
+        <h2>Synchronised on the simulation clock</h2>
         <CompareAnims projectId={projectId} sid={sid} runs={runs} storms={storms} animIdx={animIdx} />
       </div>
 
@@ -276,7 +276,7 @@ function CompareMap({ runs, storms, details, track }: {
       total: storms[run]?.n_surge_points_total,
       ramp: BLUE_RAMP,
       scaleMax: sharedMax,
-      caption: `peak surge in ${run} — color scale shared across runs`,
+      caption: `peak surge in ${run} (color scale shared across runs)`,
     }));
     const deltaLayers: MapPointLayer[] = [];
     for (let i = 1; i < runs.length; i++) {
@@ -361,7 +361,7 @@ function CompareAnims({ projectId, sid, runs, storms, animIdx }: {
 
   return (
     <div>
-      <div className="compare-maps">
+      <div className="anim-columns" style={{ "--cols": runs.length } as React.CSSProperties}>
         {runs.map((run) => (
           <div key={run}>
             <div className="secondary" style={{ fontWeight: 600, marginBottom: 6 }}>
