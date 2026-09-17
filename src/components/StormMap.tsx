@@ -145,13 +145,23 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
   const [layerKey, setLayerKey] = useState(layers[0]?.key);
   const [ready, setReady] = useState(false);
   const [mapError, setMapError] = useState<string>();
+  const [showTrack, setShowTrack] = useState(true);
+  // hides the low tail of the top-N-by-value export, which otherwise paints
+  // whole coastlines with centimeter-scale values (half of Ophelia 2005's
+  // plotted points are below 0.11 m)
+  const [floor, setFloor] = useState(0.1);
 
   useEffect(() => {
     resolveStyle().then(setStyle, (e) => setMapError(String(e)));
   }, []);
 
   const active = layers.find((l) => l.key === layerKey) ?? layers[0];
-  const points = active?.points ?? [];
+  const allPoints = active?.points ?? [];
+  const points = useMemo(
+    () => (floor > 0 ? allPoints.filter((p) => Math.abs(p[2]) >= floor) : allPoints),
+    [allPoints, floor],
+  );
+  const hidden = allPoints.length - points.length;
   const computedMax = useMemo(() => Math.max(0.1, ...points.map((p) => Math.abs(p[2]))), [points]);
   const scaleTop = active?.scaleMax ?? computedMax;
   const scaleMin = active?.diverging ? -scaleTop : 0;
@@ -208,7 +218,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
       });
     }
 
-    if (track) {
+    if (track && showTrack) {
       const coords = track.points.map((p) => [p[1], p[2]] as [number, number]);
       map.addSource("track-full", {
         type: "geojson",
@@ -308,7 +318,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
 
     const focus = points.length
       ? points.map((p) => [p[0], p[1]] as [number, number])
-      : track
+      : track && showTrack
         ? track.points.map((p) => [p[1], p[2]] as [number, number])
         : [];
     const fit = () => {
@@ -334,7 +344,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
     };
     recenterRef.current = fit;
     fit();
-  }, [active, context, track, windowT, windows, points, scaleMin, scaleTop, ready]);
+  }, [active, context, track, showTrack, windowT, windows, points, scaleMin, scaleTop, ready]);
 
   if (mapError) {
     return <p className="notice">The map could not initialize (WebGL unavailable): {mapError}</p>;
@@ -358,6 +368,22 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
             ))}
           </div>
         )}
+        {allPoints.length > 0 && (
+          <div className="seg-group" role="group" aria-label="value floor" title="hide gauges below this value">
+            {[0, 0.1, 0.25, 0.5].map((f) => (
+              <button key={f} className={floor === f ? "active" : ""} onClick={() => setFloor(f)}>
+                {f === 0 ? "all" : `≥${f} m`}
+              </button>
+            ))}
+          </div>
+        )}
+        {track && (
+          <div className="seg-group" role="group" aria-label="track visibility">
+            <button className={showTrack ? "active" : ""} onClick={() => setShowTrack(!showTrack)}>
+              track
+            </button>
+          </div>
+        )}
         {points.length > 0 && (
           <>
             <span>{scaleMin < 0 ? `−${scaleTop.toFixed(1)}` : "0"}</span>
@@ -370,10 +396,11 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
         )}
         <span className="muted">
           {points.length > 0 ? active?.caption : ""}
-          {active?.total != null && active.total > points.length
-            ? ` · showing the ${points.length.toLocaleString()} highest of ${active.total.toLocaleString()} gauges`
+          {active?.total != null && active.total > allPoints.length
+            ? ` · showing the ${allPoints.length.toLocaleString()} highest of ${active.total.toLocaleString()} gauges`
             : ""}
-          {track
+          {hidden > 0 ? ` · ${hidden.toLocaleString()} below ${floor} m hidden` : ""}
+          {track && showTrack
             ? `${points.length ? " · " : ""}dashed: observed track, solid: simulated window${windows?.length ? "s" : ""}`
             : ""}
         </span>

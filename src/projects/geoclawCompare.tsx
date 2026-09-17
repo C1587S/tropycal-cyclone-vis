@@ -275,22 +275,26 @@ function CompareMap({ runs, storms, details, track, windows }: {
       scaleMax: sharedMax,
       caption: `peak surge in ${run} (color scale shared across runs)`,
     }));
+    // every pair, not just adjacent ones: with three runs the end-to-end
+    // comparison (last vs first) is usually the one that matters most
     const deltaLayers: MapPointLayer[] = [];
     for (let i = 1; i < runs.length; i++) {
-      const a = runs[i - 1];
-      const b = runs[i];
-      const pts = diffPoints(details[a]?.surge_gauge_points, details[b]?.surge_gauge_points);
-      if (!pts.length) continue;
-      const dmax = Math.max(0.1, ...pts.map((p) => Math.abs(p[2])));
-      deltaLayers.push({
-        key: `delta-${i}`,
-        label: `Δ ${b} − ${a}`,
-        points: pts,
-        ramp: DIVERGING_RAMP,
-        diverging: true,
-        scaleMax: dmax,
-        caption: `surge difference at the ${pts.length.toLocaleString()} gauges present in both exports (red: higher in ${b})`,
-      });
+      for (let j = 0; j < i; j++) {
+        const a = runs[j];
+        const b = runs[i];
+        const pts = diffPoints(details[a]?.surge_gauge_points, details[b]?.surge_gauge_points);
+        if (!pts.length) continue;
+        const dmax = Math.max(0.1, ...pts.map((p) => Math.abs(p[2])));
+        deltaLayers.push({
+          key: `delta-${j}-${i}`,
+          label: `Δ ${b} − ${a}`,
+          points: pts,
+          ramp: DIVERGING_RAMP,
+          diverging: true,
+          scaleMax: dmax,
+          caption: `surge difference at the ${pts.length.toLocaleString()} gauges present in both exports (red: higher in ${b})`,
+        });
+      }
     }
     return [...runLayers, ...deltaLayers];
   }, [runs, storms, details]);
