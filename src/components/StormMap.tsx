@@ -395,14 +395,18 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
           </>
         )}
         <span className="muted">
-          {points.length > 0 ? active?.caption : ""}
-          {active?.total != null && active.total > allPoints.length
-            ? ` · showing the ${allPoints.length.toLocaleString()} highest of ${active.total.toLocaleString()} gauges`
-            : ""}
-          {hidden > 0 ? ` · ${hidden.toLocaleString()} below ${floor} m hidden` : ""}
-          {track && showTrack
-            ? `${points.length ? " · " : ""}dashed: observed track, solid: simulated window${windows?.length ? "s" : ""}`
-            : ""}
+          {[
+            points.length > 0 && active?.caption ? active.caption : null,
+            active?.total != null && active.total > allPoints.length
+              ? `showing the ${allPoints.length.toLocaleString()} highest of ${active.total.toLocaleString()} gauges`
+              : null,
+            hidden > 0 ? `${hidden.toLocaleString()} below ${floor} m hidden` : null,
+            track && showTrack
+              ? `dashed: observed track, solid: simulated window${windows?.length ? "s" : ""}`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </span>
       </div>
     </div>
