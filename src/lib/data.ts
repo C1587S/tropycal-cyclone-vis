@@ -262,6 +262,51 @@ export const getTrack = (project: string, catalogue: string, sid: string) =>
   fetchOptional<Track>(`${project}/catalogues/${catalogue}/tracks/${sid}.json`);
 export const getBasemap = () => fetchJson<Basemap>("basemap.json");
 
+/** Emanuel synthetic tracksets: precomputed plot inputs, one file per set. */
+export interface EmanuelSummary {
+  n_storms: number;
+  freq_per_year?: number;
+  peak_p50_ms?: number;
+  peak_max_ms?: number;
+  vp_p99_ms?: number;
+  vp_max_ms?: number;
+  share_wind_gt_vp: Record<string, number>;
+  share_vp_gt_100ms?: number;
+}
+
+export interface EmanuelSetMeta extends EmanuelSummary {
+  id: string;
+  vintage: string;
+  model: string;
+  scenario: string;
+  years: [number, number];
+}
+
+export interface EmanuelSet extends Omit<EmanuelSetMeta, keyof EmanuelSummary> {
+  /** sparse [windBin, piBin, count] cells on 1 m/s grids, per wind kind */
+  density: Record<string, [number, number, number][]>;
+  peaks_hist: number[];
+  summary: EmanuelSummary;
+  stats: Record<string, string> | null;
+}
+
+export interface IbtracsPeaks {
+  years: [number, number] | null;
+  n: number;
+  hist: number[];
+}
+
+export const getEmanuelRegistry = (project: string) =>
+  fetchJson<{ sets: EmanuelSetMeta[] }>(`${project}/index.json`, true);
+export const getEmanuelSet = (project: string, id: string) =>
+  fetchJson<EmanuelSet>(`${project}/sets/${id}.json.gz`);
+export const getIbtracsPeaks = (project: string) =>
+  fetchJson<Record<string, IbtracsPeaks>>(`${project}/ibtracs_peaks.json`);
+export const getEmanuelTrackBundle = (project: string, id: string) =>
+  fetchOptional<{ lens: number[]; lon: number[]; lat: number[]; v: number[] }>(
+    `${project}/tracksets/${id}.json.gz`,
+  );
+
 export const animUrl = (project: string, run: string, sid: string, suffix = "") =>
   `${BASE}/${project}/runs/${run}/anim/${sid}${suffix}.mp4`;
 

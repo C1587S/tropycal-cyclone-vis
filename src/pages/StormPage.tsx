@@ -35,7 +35,9 @@ export function StormPage() {
     [registry, runId],
   );
 
-  if (!view) return <main className="page-body"><p className="notice">Unknown project: {projectId}</p></main>;
+  if (!view?.StormBody) {
+    return <main className="page-body"><p className="notice">No storm view for project: {projectId}</p></main>;
+  }
   if (error) return <main className="page-body"><p className="notice">Failed to load {runId}: {error}</p></main>;
   if (!manifest || !storm) return <main className="page-body"><p className="muted">Loading storm…</p></main>;
 
