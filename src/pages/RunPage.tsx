@@ -40,15 +40,12 @@ export function RunPage() {
     });
   }, [manifest, query, statusFilter, sortKey, sortDir]);
 
-  if (!view?.stormColumns || !view.runTiles) {
-    return <main className="page-body"><p className="notice">No run view for project: {projectId}</p></main>;
-  }
+  if (!view) return <main className="page-body"><p className="notice">Unknown project: {projectId}</p></main>;
   if (error) return <main className="page-body"><p className="notice">Failed to load run {runId}: {error}</p></main>;
   if (!manifest) return <main className="page-body"><p className="muted">Loading run…</p></main>;
 
   const r = manifest.run;
   const statuses = Object.keys(r.counts ?? {});
-  const { stormColumns, runTiles } = view;
 
   const setParam = (key: string, value: string, def: string) => {
     const next = new URLSearchParams(searchParams);
@@ -70,7 +67,7 @@ export function RunPage() {
       </div>
 
       <div className="tile-row">
-        {runTiles(r).map((tile) => (
+        {view.runTiles(r).map((tile) => (
           <div className="tile" key={tile.label}>
             <div className="label">{tile.label}</div>
             <div className="value">{tile.value}</div>
@@ -110,7 +107,7 @@ export function RunPage() {
           <table className="storm-table">
             <thead>
               <tr>
-                {stormColumns.map((c) => (
+                {view.stormColumns.map((c) => (
                   <th
                     key={c.key}
                     className={(c.num ? "num " : "") + (sortKey === c.key ? "sorted" : "")}
@@ -131,7 +128,7 @@ export function RunPage() {
             <tbody>
               {filtered.map((s) => (
                 <tr key={s.sid} onClick={() => navigate(`/p/${projectId}/run/${runId}/storm/${s.sid}`)}>
-                  {stormColumns.map((c) => (
+                  {view.stormColumns.map((c) => (
                     <td key={c.key} className={c.num ? "num" : ""}>
                       {c.render ? c.render(s) : String(s[c.key] ?? "–")}
                     </td>

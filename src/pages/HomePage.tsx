@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { ScopeChips } from "../components/ScopeChips";
 import { StatusChip } from "../components/StatusChip";
 import { getProjects, getRegistry, type ProjectMeta, type Registry } from "../lib/data";
-import { PROJECT_VIEWS } from "../projects";
 
 export function HomePage() {
   const [projects, setProjects] = useState<ProjectMeta[]>();
@@ -15,7 +14,6 @@ export function HomePage() {
       (ps) => {
         setProjects(ps);
         for (const p of ps) {
-          if (PROJECT_VIEWS[p.id]?.Landing) continue; // registry has its own shape
           getRegistry(p.id).then(
             (reg) => setRegistries((r) => ({ ...r, [p.id]: reg })),
             () => undefined,
@@ -37,14 +35,6 @@ export function HomePage() {
             {p.description && <span className="muted">{p.description}</span>}
           </div>
           <div className="run-cards section">
-            {PROJECT_VIEWS[p.id]?.Landing && (
-              <Link className="run-card" to={`/p/${p.id}`}>
-                <div className="name">open</div>
-                <div className="facts">
-                  <span className="muted">{p.description}</span>
-                </div>
-              </Link>
-            )}
             {[...(registries[p.id]?.runs ?? [])].reverse().map((r) => (
               <Link className="run-card" key={r.name} to={`/p/${p.id}/run/${r.name}`}>
                 <div className="name">{r.name}</div>

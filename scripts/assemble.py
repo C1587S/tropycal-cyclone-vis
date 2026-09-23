@@ -62,15 +62,6 @@ PROJECT_META = {
             "coastal surge, gauge water levels, tracks, run diagnostics."
         ),
     },
-    "emanuel-tracks": {
-        "id": "emanuel-tracks",
-        "title": "Emanuel synthetic tracks",
-        "description": (
-            "Kerry Emanuel downscaled tracksets (CONUS Atlantic-Pacific): "
-            "tracks, wind against potential intensity, and peak-wind "
-            "distributions against IBTrACS, per model, scenario and period."
-        ),
-    },
 }
 
 TRACKS_ZARR = str(
@@ -89,14 +80,6 @@ SERIES_TOP_DEPTH = 5  # gauges ranked by peak inundation depth
 
 def log(msg: str) -> None:
     print(msg, flush=True)
-
-
-def _f(x, nd: int = 4):
-    """JSON-safe rounded float: NaN/inf become None."""
-    if x is None:
-        return None
-    x = float(x)
-    return None if not np.isfinite(x) else round(x, nd)
 
 
 def write_json(path: Path, obj) -> int:
@@ -278,149 +261,6 @@ def assemble_series(run: str, manifest: dict, compact_dirs: list[Path], out_dir:
         log(f"{run}: series {sid} {len(gauges)} gauges {n / 1e3:.0f} KB gz in {time.time() - t0:.0f} s")
 
 
-EMANUEL_ROOT = CIL / "coastal/tropical-cyclones/tracks_processed/conus/mortality"
-EMANUEL_RAW = CIL / "coastal/tropical-cyclones/tracks"
-EMANUEL_VINTAGES = ("20260805", "20260805_HT")
-KT_TO_MS = 0.514444
-# density grid, m/s: wind axis and potential-intensity axis; the PI axis
-# runs far past any physical ocean value on purpose, so the anomalous tail
-# is on the plot rather than clipped out of it
-V_BINS = np.arange(0, 161)
-VP_BINS = np.arange(0, 221)
-PEAK_BINS = np.arange(0, 161)
-
-
-def _emanuel_raw_name(model: str, scenario: str, years: tuple[int, int]) -> str:
-    """Raw trackset dir holding stats.txt. Scenario sets exist once per
-    calibration: the 2015-2030 window is <scenario>cal, 2079-2099 is
-    <scenario>_2cal (verified against the stats files' own 'Years or
-    period'); 20th and reanal have a single window each."""
-    tok = scenario
-    if scenario in ("ssp245", "ssp370") and years[0] >= 2070:
-        tok = f"{scenario}_2"
-    return f"RHG4_CONUS_AP_{model}_{tok}cal"
-
-
-def _parse_stats(path: Path) -> dict | None:
-    if not path.exists():
-        return None
-    out = {}
-    for line in path.read_text().splitlines():
-        if ":" in line:
-            k, v = line.split(":", 1)
-            out[k.strip()] = v.strip()
-    return out
-
-
-def assemble_emanuel(project_root: Path, force: bool) -> None:
-    """Precomputed plot inputs for every Emanuel trackset.
-
-    Per set (one small json.gz): wind-vs-PI density on a fixed 1 m/s grid
-    for both wind definitions (vpstore is stored in KNOTS and is converted
-    to m/s here; v_total/v_circular are already m/s), the per-storm
-    peak-wind histogram, and a summary with the calibrated frequency and
-    the PI-tail facts. Track polyline bundles are a separate step
-    (emanuel-trackbundles) held back until data moves off git.
-    """
-    import xarray as xr
-
-    sets_meta = []
-    for vintage in EMANUEL_VINTAGES:
-        for z in sorted((EMANUEL_ROOT / vintage).glob("*.zarr")):
-            stem = z.stem  # AP_<model>_<scenario>_<y0>_<y1>
-            parts = stem.split("_")
-            model, scenario = parts[1], parts[2]
-            years = (int(parts[-2]), int(parts[-1]))
-            set_id = f"{vintage}/{stem}"
-            out = project_root / "sets" / vintage / f"{stem}.json.gz"
-
-            ds = xr.open_zarr(str(z), consolidated=True)
-            E, S, T = ds.sizes["ensemble"], ds.sizes["storm"], ds.sizes["time"]
-            vp_ms = np.broadcast_to(ds["vpstore"].values * KT_TO_MS, (E, S, T)).reshape(E * S, T)
-            winds = {
-                "v_total": ds["v_total"].values.reshape(E * S, T),
-                "v_circular": ds["v_circular"].values.reshape(E * S, T),
-            }
-            freq = float(ds["freq"].values)
-            ds.close()
-
-            density = {}
-            share_gt = {}
-            for key, v in winds.items():
-                m = np.isfinite(v) & np.isfinite(vp_ms)
-                H, _, _ = np.histogram2d(v[m], vp_ms[m], bins=[V_BINS, VP_BINS])
-                density[key] = [[int(i), int(j), int(c)] for (i, j), c in np.ndenumerate(H) if c > 0]
-                share_gt[key] = _f(float((v[m] > vp_ms[m]).mean()))
-
-            v = winds["v_total"]
-            peaks = np.nanmax(np.where(np.isfinite(v), v, -np.inf), axis=1)
-            peaks = peaks[np.isfinite(peaks) & (peaks > 0)]
-            peaks_hist, _ = np.histogram(peaks, bins=PEAK_BINS)
-
-            vp_fin = vp_ms[np.isfinite(vp_ms)]
-            stats = _parse_stats(
-                EMANUEL_RAW / vintage / _emanuel_raw_name(model, scenario, years) / "stats.txt"
-            )
-            summary = {
-                "n_storms": int(len(peaks)),
-                "freq_per_year": _f(freq),
-                "peak_p50_ms": _f(float(np.percentile(peaks, 50))),
-                "peak_max_ms": _f(float(peaks.max())),
-                "vp_p99_ms": _f(float(np.percentile(vp_fin, 99))),
-                "vp_max_ms": _f(float(vp_fin.max())),
-                "share_wind_gt_vp": share_gt,
-                "share_vp_gt_100ms": _f(float((vp_fin > 100).mean())),
-            }
-            if force or not out.exists():
-                write_json_gz(out, {
-                    "id": set_id,
-                    "vintage": vintage,
-                    "model": model,
-                    "scenario": scenario,
-                    "years": list(years),
-                    "density": density,
-                    "peaks_hist": [int(x) for x in peaks_hist],
-                    "summary": summary,
-                    "stats": stats,
-                })
-            sets_meta.append({
-                "id": set_id, "vintage": vintage, "model": model,
-                "scenario": scenario, "years": list(years), **summary,
-            })
-            log(f"emanuel {set_id}: {summary['n_storms']} storms, "
-                f"vp_max {summary['vp_max_ms']} m/s, "
-                f"v_circ>vp {share_gt['v_circular']}")
-
-    # IBTrACS peak-wind overlays, one histogram per distinct period, from
-    # the CONUS-proximity catalogue so the population matches the tracksets'
-    # own CONUS filter; plus the full record as reference for future periods
-    import pandas as pd
-
-    cat = pd.read_parquet(str(CIL / "coastal/tropical-cyclones/catalogues/conus_na_complete_v1.parquet"))
-    ds = xr.open_zarr(TRACKS_ZARR, consolidated=True)
-    zarr_sids = ds["sid"].values.astype(str)
-    pos = {sid: i for i, sid in enumerate(zarr_sids)}
-    rows = [pos[s] for s in cat["sid"] if s in pos]
-    sub = ds[["v_total", "season"]].isel(storm=rows).load()
-    ds.close()
-    v = sub["v_total"].values
-    seasons = sub["season"].values.astype(int)
-    peaks = np.nanmax(np.where(np.isfinite(v), v, -np.inf), axis=1)
-    ok = np.isfinite(peaks) & (peaks > 0)
-    periods = sorted({tuple(m["years"]) for m in sets_meta})
-    overlays = {}
-    for y0, y1 in periods:
-        sel = ok & (seasons >= y0) & (seasons <= y1)
-        h, _ = np.histogram(peaks[sel], bins=PEAK_BINS)
-        overlays[f"{y0}_{y1}"] = {"years": [y0, y1], "n": int(sel.sum()), "hist": [int(x) for x in h]}
-    h, _ = np.histogram(peaks[ok], bins=PEAK_BINS)
-    overlays["all"] = {"years": None, "n": int(ok.sum()), "hist": [int(x) for x in h]}
-    write_json(project_root / "ibtracs_peaks.json", overlays)
-
-    write_json(project_root / "index.json", {"sets": sets_meta})
-    log(f"emanuel registry: {len(sets_meta)} sets; ibtracs overlays for {len(periods)} periods")
-
-
 def assemble_tracks(manifest: dict, catalogue_name: str, project_root: Path) -> None:
     """Observed IBTrACS tracks for every storm in the manifest (run-independent)."""
     import pandas as pd
@@ -537,8 +377,8 @@ def update_registry(run: str, manifest: dict, catalogue_name: str, project_root:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--project", default="geoclaw", help="project id under public/data/")
-    p.add_argument("--run", help="run name, e.g. per_storm_v2 (geoclaw steps)")
-    p.add_argument("--report-dir", help="report dir holding manifest.json and gauges/ (geoclaw steps)")
+    p.add_argument("--run", required=True, help="run name, e.g. per_storm_v2")
+    p.add_argument("--report-dir", required=True, help="report dir holding manifest.json and gauges/")
     p.add_argument("--anim-dir", help="dir holding <sid>.mp4 pairs and index.json for this run")
     p.add_argument("--compact", help="comma-separated compact dirs, lowest precedence first")
     p.add_argument("--steps", default="manifest,details,anim",
@@ -547,13 +387,6 @@ def main() -> int:
     p.add_argument("--force", action="store_true", help="recompute params already cached")
     args = p.parse_args()
 
-    if "emanuel" in {s.strip() for s in args.steps.split(",")}:
-        register_project("emanuel-tracks")
-        assemble_emanuel(DATA_ROOT / "emanuel-tracks", args.force)
-        return 0
-
-    if not args.run or not args.report_dir:
-        p.error("--run and --report-dir are required for geoclaw steps")
     report_dir = Path(args.report_dir)
     manifest = load_manifest(report_dir)
     catalogue_name = Path(manifest["run"]["catalogue"]).stem

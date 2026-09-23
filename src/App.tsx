@@ -3,15 +3,6 @@ import { ComparePage } from "./pages/ComparePage";
 import { HomePage } from "./pages/HomePage";
 import { RunPage } from "./pages/RunPage";
 import { StormPage } from "./pages/StormPage";
-import { PROJECT_VIEWS } from "./projects";
-
-/** /p/<id> for projects that define a Landing (non-run-shaped projects). */
-function ProjectLanding() {
-  const { projectId = "" } = useParams();
-  const view = PROJECT_VIEWS[projectId];
-  if (!view?.Landing) return <Navigate to="/" replace />;
-  return <view.Landing projectId={projectId} />;
-}
 
 function Header() {
   const { projectId, runId, sid } = useParams();
@@ -58,7 +49,6 @@ export function App() {
       <Route path="/p/:projectId/run/:runId" element={<Shell><RunPage /></Shell>} />
       <Route path="/p/:projectId/run/:runId/storm/:sid" element={<Shell><StormPage /></Shell>} />
       <Route path="/p/:projectId/compare/:sid" element={<Shell><ComparePage /></Shell>} />
-      <Route path="/p/:projectId" element={<Shell><ProjectLanding /></Shell>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
