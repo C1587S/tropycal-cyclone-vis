@@ -6,6 +6,22 @@ import { chartTheme, rampCss, WIND_RAMP } from "../lib/palette";
 /** fixed top of the wind colour scale, matching the fleet's wind panels */
 const WIND_MAX_MS = 70;
 
+/** Phase-shifted [2,2] dash patterns: stepping through them marches the
+ * dashes toward the end of the line, i.e. the direction of travel, since
+ * track coordinates are in time order. MapLibre has no dash offset, so the
+ * ants are made by cycling the pattern itself. */
+const ANTS: number[][] = [
+  [0, 2, 2],
+  [0.5, 2, 1.5],
+  [1, 2, 1],
+  [1.5, 2, 0.5],
+  [2, 2],
+  [0, 0.5, 2, 1.5],
+  [0, 1, 2, 1],
+  [0, 1.5, 2, 0.5],
+];
+const ANTS_STEP_MS = 150;
+
 /** One selectable point overlay: [lon, lat, value, id] tuples colored by a
  * sequential ramp. The project supplies the semantics (label, caption).
  * `total` is the full population size; when it exceeds points.length the
@@ -166,6 +182,8 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map>();
   const recenterRef = useRef<() => void>(() => undefined);
+  const antsRef = useRef<number>();
+  const onScreenRef = useRef(true);
   const [style, setStyle] = useState<maplibregl.StyleSpecification>();
   const [layerKey, setLayerKey] = useState(layers[0]?.key);
   const [ready, setReady] = useState(false);
@@ -212,7 +230,13 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
     map.addControl(new RecenterControl(() => recenterRef.current()), "top-right");
     map.on("load", () => setReady(true));
     mapRef.current = map;
+    // the ants tick skips repaints while the map is scrolled out of view
+    const io = new IntersectionObserver(([e]) => {
+      onScreenRef.current = e.isIntersecting;
+    });
+    io.observe(containerRef.current);
     return () => {
+      io.disconnect();
       map.remove();
       mapRef.current = undefined;
       setReady(false);
@@ -224,6 +248,8 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
     const map = mapRef.current;
     if (!map || !ready || !active) return;
     const t = chartTheme();
+
+    window.clearInterval(antsRef.current);
 
     const oldIds = ["context", "gauges", "track-full", "track-sim", "track-pts", "track-ends"];
     for (let i = 0; i < 8; i++) oldIds.push(`track-win-${i}`);
@@ -252,8 +278,18 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
         id: "track-full",
         type: "line",
         source: "track-full",
-        paint: { "line-color": t.textMuted, "line-width": 1.4, "line-dasharray": [2, 2] },
+        paint: { "line-color": t.textMuted, "line-width": 1.4, "line-dasharray": ANTS[0] },
       });
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        let step = 0;
+        antsRef.current = window.setInterval(() => {
+          if (!onScreenRef.current) return;
+          step = (step + 1) % ANTS.length;
+          if (map.getLayer("track-full")) {
+            map.setPaintProperty("track-full", "line-dasharray", ANTS[step]);
+          }
+        }, ANTS_STEP_MS);
+      }
       if (windows?.length) {
         windows.forEach((w, i) => {
           const sim = track.points.filter((p) => p[0] >= w.t[0] && p[0] <= w.t[1]);
@@ -477,6 +513,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
     };
     recenterRef.current = fit;
     fit();
+    return () => window.clearInterval(antsRef.current);
   }, [active, context, track, showTrack, windowT, windows, points, scaleMin, scaleTop, ready]);
 
   if (mapError) {
