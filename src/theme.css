@@ -559,3 +559,10 @@ a:hover {
 .maplibregl-map {
   font: inherit;
 }
+
+/* the library's own badge, in both of its forms; the basemap's required
+   credits (OpenFreeMap / OpenMapTiles / OpenStreetMap) stay untouched */
+a.maplibregl-ctrl-logo,
+.maplibregl-ctrl-attrib a[href^="https://maplibre.org"] {
+  display: none;
+}

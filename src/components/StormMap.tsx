@@ -81,6 +81,28 @@ function rampStops(ramp: string[], min: number, max: number): (number | string)[
   return out;
 }
 
+function fmtUtc(epochS: number): string {
+  return new Date(epochS * 1000).toISOString().slice(0, 16).replace("T", " ") + "Z";
+}
+
+/** Linear position on the track at epoch second t, clamped to its span. */
+function trackPositionAt(track: Track, t: number): [number, number] | null {
+  const pts = track.points;
+  if (!pts.length) return null;
+  if (t <= pts[0][0]) return [pts[0][1], pts[0][2]];
+  const last = pts[pts.length - 1];
+  if (t >= last[0]) return [last[1], last[2]];
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i][0] >= t) {
+      const [t0, lon0, lat0] = pts[i - 1];
+      const [t1, lon1, lat1] = pts[i];
+      const f = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
+      return [lon0 + f * (lon1 - lon0), lat0 + f * (lat1 - lat0)];
+    }
+  }
+  return [last[1], last[2]];
+}
+
 /** The count detail shown under a layer button's name. */
 function layerSub(l: MapPointLayer): string | null {
   if (!l.points.length) return null;
@@ -146,10 +168,9 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
   const [ready, setReady] = useState(false);
   const [mapError, setMapError] = useState<string>();
   const [showTrack, setShowTrack] = useState(true);
-  // hides the low tail of the top-N-by-value export, which otherwise paints
-  // whole coastlines with centimeter-scale values (half of Ophelia 2005's
-  // plotted points are below 0.11 m)
-  const [floor, setFloor] = useState(0.1);
+  // opens at "all": the map starts with every filter at its widest, and the
+  // floor is opt-in for hiding the centimeter tail of the top-N export
+  const [floor, setFloor] = useState(0);
 
   useEffect(() => {
     resolveStyle().then(setStyle, (e) => setMapError(String(e)));
@@ -201,7 +222,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
     if (!map || !ready || !active) return;
     const t = chartTheme();
 
-    const oldIds = ["context", "gauges", "track-full", "track-sim"];
+    const oldIds = ["context", "gauges", "track-full", "track-sim", "track-pts", "track-ends"];
     for (let i = 0; i < 8; i++) oldIds.push(`track-win-${i}`);
     for (const id of oldIds) {
       if (map.getLayer(id)) map.removeLayer(id);
@@ -274,6 +295,61 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
           });
         }
       }
+
+      // observed vertices, sized by wind: a second color ramp would collide
+      // with the gauge layers, so intensity is carried by radius + tooltip
+      map.addSource("track-pts", {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features: track.points.map(([tt, lon, lat, v, p, rmw]) => ({
+            type: "Feature",
+            properties: { t: tt, v, p, rmw },
+            geometry: { type: "Point", coordinates: [lon, lat] },
+          })),
+        },
+      });
+      map.addLayer({
+        id: "track-pts",
+        type: "circle",
+        source: "track-pts",
+        paint: {
+          "circle-radius": [
+            "interpolate",
+            ["linear"],
+            ["coalesce", ["get", "v"], 0],
+            0,
+            1.6,
+            70,
+            6.5,
+          ],
+          "circle-color": t.textSecondary,
+          "circle-stroke-color": "#fcfcfb",
+          "circle-stroke-width": 0.6,
+          "circle-opacity": 0.85,
+        },
+      });
+      const trackPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
+      map.on("mousemove", "track-pts", (e) => {
+        const f = e.features?.[0];
+        if (!f) return;
+        map.getCanvas().style.cursor = "default";
+        const pr = f.properties as { t: number; v: number | null; p: number | null; rmw: number | null };
+        const wind = pr.v != null ? `${pr.v.toFixed(1)} m/s (${(pr.v * 1.944).toFixed(0)} kt)` : "–";
+        trackPopup
+          .setLngLat(e.lngLat)
+          .setHTML(
+            `<strong>${wind}</strong> observed wind<br/>` +
+              `<span style="color:#898781">${fmtUtc(pr.t)} · ` +
+              `${pr.p != null ? pr.p.toFixed(0) + " mb" : "–"} · ` +
+              `RMW ${pr.rmw != null ? pr.rmw.toFixed(0) + " km" : "–"}</span>`,
+          )
+          .addTo(map);
+      });
+      map.on("mouseleave", "track-pts", () => {
+        map.getCanvas().style.cursor = "";
+        trackPopup.remove();
+      });
     }
 
     if (points.length) {
@@ -314,6 +390,62 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
         map.getCanvas().style.cursor = "";
         popup.remove();
       });
+    }
+
+    // where each run's simulated interval starts and ends on the track: the
+    // clipped tail is visible directly instead of only as a config number
+    if (track && showTrack) {
+      const winList = windows?.length
+        ? windows
+        : windowT
+          ? [{ label: "simulated window", color: t.textPrimary, t: windowT }]
+          : [];
+      const endFeatures: GeoJSON.Feature[] = [];
+      for (const w of winList) {
+        (["start", "end"] as const).forEach((kind, k) => {
+          const pos = trackPositionAt(track, w.t[k]);
+          if (!pos) return;
+          endFeatures.push({
+            type: "Feature",
+            properties: { label: w.label, color: w.color, kind, time: w.t[k] },
+            geometry: { type: "Point", coordinates: pos },
+          });
+        });
+      }
+      if (endFeatures.length) {
+        map.addSource("track-ends", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: endFeatures },
+        });
+        map.addLayer({
+          id: "track-ends",
+          type: "circle",
+          source: "track-ends",
+          paint: {
+            "circle-radius": 6,
+            "circle-color": ["get", "color"] as never,
+            "circle-stroke-color": "#fcfcfb",
+            "circle-stroke-width": 2,
+          },
+        });
+        const endPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
+        map.on("mousemove", "track-ends", (e) => {
+          const f = e.features?.[0];
+          if (!f) return;
+          map.getCanvas().style.cursor = "default";
+          const pr = f.properties as { label: string; kind: string; time: number };
+          endPopup
+            .setLngLat(e.lngLat)
+            .setHTML(
+              `<strong>${pr.label}</strong> ${pr.kind}<br/><span style="color:#898781">${fmtUtc(pr.time)}</span>`,
+            )
+            .addTo(map);
+        });
+        map.on("mouseleave", "track-ends", () => {
+          map.getCanvas().style.cursor = "";
+          endPopup.remove();
+        });
+      }
     }
 
     const focus = points.length
@@ -402,7 +534,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
               : null,
             hidden > 0 ? `${hidden.toLocaleString()} below ${floor} m hidden` : null,
             track && showTrack
-              ? `dashed: observed track, solid: simulated window${windows?.length ? "s" : ""}`
+              ? `dashed: observed track (vertices sized by wind), solid: simulated window${windows?.length ? "s" : ""}, rings: window start/end`
               : null,
           ]
             .filter(Boolean)
