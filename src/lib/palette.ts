@@ -90,10 +90,22 @@ export const DIVERGING_RAMP = [
   "#7f2626",
 ];
 
-/** Sequential teal ramp for observed wind on the track: the aqua slot is
- * the CVD-safe companion to blue, so wind vertices stay distinguishable
- * from the surge (blue), depth (orange) and difference (blue-red) layers. */
-export const WIND_RAMP = ["#d3f2e5", "#9fe3c6", "#66cda4", "#1baf7a", "#12905f", "#0b7048", "#065034"];
+/** Wind ramp for the track vertices: plasma, dark indigo -> golden. Multi-
+ * hue and perceptually uniform, so the low end stays visible against the
+ * light basemap and steps read apart; chosen over viridis because plasma
+ * avoids the blues and teals the surge ramp occupies. Top stop trimmed to
+ * golden so the maximum doesn't wash out on pale land. */
+export const WIND_RAMP = [
+  "#0d0887",
+  "#5c01a6",
+  "#8f0da4",
+  "#b12a90",
+  "#cc4778",
+  "#e16462",
+  "#f2844b",
+  "#fca636",
+  "#fcce25",
+];
 
 /** Sequential blue ramp (magnitude), light -> dark, from the reference palette. */
 export const BLUE_RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
