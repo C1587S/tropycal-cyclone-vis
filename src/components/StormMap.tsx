@@ -1,7 +1,10 @@
 import maplibregl from "maplibre-gl";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getBasemap, type GaugePoint, type Track } from "../lib/data";
-import { chartTheme, rampCss } from "../lib/palette";
+import { chartTheme, rampCss, WIND_RAMP } from "../lib/palette";
+
+/** fixed top of the wind colour scale, matching the fleet's wind panels */
+const WIND_MAX_MS = 70;
 
 /** One selectable point overlay: [lon, lat, value, id] tuples colored by a
  * sequential ramp. The project supplies the semantics (label, caption).
@@ -296,8 +299,8 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
         }
       }
 
-      // observed vertices, sized by wind: a second color ramp would collide
-      // with the gauge layers, so intensity is carried by radius + tooltip
+      // observed vertices, coloured by wind on the fixed 0-70 m/s scale the
+      // fleet's wind panels use; vertices without a wind value stay gray
       map.addSource("track-pts", {
         type: "geojson",
         data: {
@@ -314,19 +317,17 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
         type: "circle",
         source: "track-pts",
         paint: {
-          "circle-radius": [
+          "circle-radius": 3.4,
+          "circle-color": [
             "interpolate",
             ["linear"],
-            ["coalesce", ["get", "v"], 0],
-            0,
-            1.6,
-            70,
-            6.5,
-          ],
-          "circle-color": t.textSecondary,
+            ["coalesce", ["get", "v"], -1],
+            -1,
+            t.baseline,
+            ...rampStops(WIND_RAMP, 0, WIND_MAX_MS),
+          ] as never,
           "circle-stroke-color": "#fcfcfb",
-          "circle-stroke-width": 0.6,
-          "circle-opacity": 0.85,
+          "circle-stroke-width": 0.7,
         },
       });
       const trackPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
@@ -526,6 +527,13 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
             </span>
           </>
         )}
+        {track && showTrack && track.points.some((p) => p[3] != null) && (
+          <>
+            <span style={{ marginLeft: 8 }}>wind 0</span>
+            <div className="ramp" style={{ background: rampCss(WIND_RAMP) }} />
+            <span>{WIND_MAX_MS} m/s</span>
+          </>
+        )}
         <span className="muted">
           {[
             points.length > 0 && active?.caption ? active.caption : null,
@@ -534,7 +542,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
               : null,
             hidden > 0 ? `${hidden.toLocaleString()} below ${floor} m hidden` : null,
             track && showTrack
-              ? `dashed: observed track (vertices sized by wind), solid: simulated window${windows?.length ? "s" : ""}, rings: window start/end`
+              ? `dashed: observed track (vertices coloured by wind), solid: simulated window${windows?.length ? "s" : ""}, rings: window start/end`
               : null,
           ]
             .filter(Boolean)
