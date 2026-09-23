@@ -443,6 +443,34 @@ a:hover {
 .map-legend .seg-group {
   flex: none;
 }
+.sym-legend {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-secondary);
+}
+.sym {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin: 0 5px 0 12px;
+  flex: none;
+}
+.sym-circle {
+  border: 2px solid var(--text-secondary);
+  border-radius: 50%;
+  background: var(--surface-1);
+}
+.sym-square {
+  border: 2px solid var(--text-secondary);
+  background: var(--surface-1);
+}
+.sym-ring {
+  border-radius: 50%;
+  background: var(--text-primary);
+  border: 2px solid #fcfcfb;
+  box-shadow: 0 0 0 1px var(--baseline);
+}
+
 .map-legend .ramp {
   height: 8px;
   width: 140px;

@@ -22,6 +22,22 @@ const ANTS: number[][] = [
 ];
 const ANTS_STEP_MS = 150;
 
+/** Hollow square icon for the observed track's end (canvas-drawn: symbol
+ * glyphs would need a glyph server the offline fallback style lacks). */
+function squareIcon(stroke: string, fill: string): ImageData {
+  const px = 28;
+  const canvas = document.createElement("canvas");
+  canvas.width = px;
+  canvas.height = px;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 5;
+  ctx.fillRect(4, 4, px - 8, px - 8);
+  ctx.strokeRect(4, 4, px - 8, px - 8);
+  return ctx.getImageData(0, 0, px, px);
+}
+
 /** One selectable point overlay: [lon, lat, value, id] tuples colored by a
  * sequential ramp. The project supplies the semantics (label, caption).
  * `total` is the full population size; when it exceeds points.length the
@@ -251,7 +267,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
 
     window.clearInterval(antsRef.current);
 
-    const oldIds = ["context", "gauges", "track-full", "track-sim", "track-pts", "track-ends"];
+    const oldIds = ["context", "gauges", "track-full", "track-sim", "track-pts", "track-ends", "track-a", "track-b"];
     for (let i = 0; i < 8; i++) oldIds.push(`track-win-${i}`);
     for (const id of oldIds) {
       if (map.getLayer(id)) map.removeLayer(id);
@@ -366,6 +382,42 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
           "circle-stroke-width": 0.7,
         },
       });
+      // observed extremes: circle at genesis, square at the last observation
+      // (the usual convention); hollow and gray like the dashed line itself,
+      // so they read as a different family from the filled window rings
+      const first = track.points[0];
+      const last = track.points[track.points.length - 1];
+      if (first && last) {
+        map.addSource("track-a", {
+          type: "geojson",
+          data: { type: "Feature", properties: { t: first[0] }, geometry: { type: "Point", coordinates: [first[1], first[2]] } },
+        });
+        map.addLayer({
+          id: "track-a",
+          type: "circle",
+          source: "track-a",
+          paint: {
+            "circle-radius": 5.5,
+            "circle-color": "#fcfcfb",
+            "circle-stroke-color": t.textSecondary,
+            "circle-stroke-width": 2.2,
+          },
+        });
+        if (!map.hasImage("track-end-square")) {
+          map.addImage("track-end-square", squareIcon(t.textSecondary, "#fcfcfb"), { pixelRatio: 2 });
+        }
+        map.addSource("track-b", {
+          type: "geojson",
+          data: { type: "Feature", properties: { t: last[0] }, geometry: { type: "Point", coordinates: [last[1], last[2]] } },
+        });
+        map.addLayer({
+          id: "track-b",
+          type: "symbol",
+          source: "track-b",
+          layout: { "icon-image": "track-end-square", "icon-allow-overlap": true },
+        });
+      }
+
       const trackPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
       map.on("mousemove", "track-pts", (e) => {
         const f = e.features?.[0];
@@ -387,6 +439,25 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
         map.getCanvas().style.cursor = "";
         trackPopup.remove();
       });
+      for (const [layerId, label] of [
+        ["track-a", "observed track start"],
+        ["track-b", "observed track end"],
+      ] as const) {
+        map.on("mousemove", layerId, (e) => {
+          const f = e.features?.[0];
+          if (!f) return;
+          map.getCanvas().style.cursor = "default";
+          const pr = f.properties as { t: number };
+          trackPopup
+            .setLngLat(e.lngLat)
+            .setHTML(`<strong>${label}</strong><br/><span style="color:#898781">${fmtUtc(pr.t)}</span>`)
+            .addTo(map);
+        });
+        map.on("mouseleave", layerId, () => {
+          map.getCanvas().style.cursor = "";
+          trackPopup.remove();
+        });
+      }
     }
 
     if (points.length) {
@@ -571,6 +642,13 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
             <span>{WIND_MAX_MS} m/s</span>
           </>
         )}
+        {track && showTrack && (
+          <span className="sym-legend">
+            <span className="sym sym-circle" /> track start
+            <span className="sym sym-square" /> track end
+            <span className="sym sym-ring" /> window start/end
+          </span>
+        )}
         <span className="muted">
           {[
             points.length > 0 && active?.caption ? active.caption : null,
@@ -579,7 +657,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
               : null,
             hidden > 0 ? `${hidden.toLocaleString()} below ${floor} m hidden` : null,
             track && showTrack
-              ? `dashed: observed track (vertices coloured by wind), solid: simulated window${windows?.length ? "s" : ""}, rings: window start/end`
+              ? `dashed: observed track (vertices coloured by wind), solid: simulated window${windows?.length ? "s" : ""}`
               : null,
           ]
             .filter(Boolean)
