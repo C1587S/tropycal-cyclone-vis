@@ -234,18 +234,27 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
   );
 }
 
-/** Peak inundation depth, with a caution when the number is suspect.
- *
- * build_report.py's peak_depth_m excludes land gauges only when their
- * reporting cell at peak sits more than 5 m below sea level (DEEP_CELL_M).
- * A cell a few meters below MSL passes that filter, and h then includes the
- * sub-sea-level water column — Katrina's 9.05 m headline comes from a cell
- * at -4.68 m whose actual water surface is at 4.37 m. Until the metric is
- * revised upstream, flag any peak whose reporting cell sits more than 1 m
- * below MSL (the same tolerance the ocean-side guard uses). */
+/** Whether this storm's peak depth is the OLD raw-column metric (max h at
+ * the gauge, including water that was below MSL before the storm) rather
+ * than the current MSL-referenced one (h + min(0, b), i.e. min(h, eta)).
+ * The manifests encode the difference exactly: under the new metric
+ * peak_depth_m is strictly less than the gauge's raw column whenever the
+ * cell sits below MSL; under the old metric the two are equal. Runs are
+ * mixed until the older reports are regenerated. */
+function isRawColumnDepth(storm: StormBodyProps["storm"]): boolean {
+  const pg = storm.peak_gauge;
+  if (storm.peak_depth_m == null || pg?.depth_m == null) return false;
+  return Math.abs(storm.peak_depth_m - pg.depth_m) < 0.005;
+}
+
+/** Peak inundation depth. Flags only the old raw-column metric when the
+ * reporting cell sits below MSL (that depth includes standing water);
+ * MSL-referenced values are labeled as such instead of warned about. */
 function PeakDepthTile({ storm }: { storm: StormBodyProps["storm"] }) {
   const cellB = storm.peak_gauge?.b_at_peak_m;
-  const suspect = cellB != null && cellB < -1.0;
+  const belowMsl = cellB != null && cellB < -1.0;
+  const rawColumn = isRawColumnDepth(storm);
+  const suspect = belowMsl && rawColumn;
   return (
     <div className="tile">
       <div className="label">Peak depth</div>
@@ -253,17 +262,19 @@ function PeakDepthTile({ storm }: { storm: StormBodyProps["storm"] }) {
         {fmtMeters(storm.peak_depth_m)}
         {suspect && (
           <span
-            title="The reporting cell sits below sea level at peak, so this depth includes sub-sea-level water column"
+            title="Old raw-column metric: this run's report predates the MSL reference, so the depth includes water that was below sea level before the storm"
             style={{ color: "#ec835a", marginLeft: 6, fontSize: 15 }}
           >
-            ⚠ suspect
+            ⚠ raw column
           </span>
         )}
       </div>
       <div className="detail">
         {suspect
-          ? `cell ${Math.abs(cellB).toFixed(1)} m below MSL at peak · surface at ${fmtMeters(storm.peak_gauge?.eta_at_peak_m)} · raw ${fmtMeters(storm.raw_peak_depth_m)}`
-          : `raw ${fmtMeters(storm.raw_peak_depth_m)}`}
+          ? `includes standing water: cell ${Math.abs(cellB).toFixed(1)} m below MSL · surface at ${fmtMeters(storm.peak_gauge?.eta_at_peak_m)} · regenerate report for the MSL-referenced value`
+          : belowMsl || (cellB != null && cellB < 0 && !rawColumn)
+            ? `referenced to MSL: column ${fmtMeters(storm.peak_gauge?.depth_m)} in a cell ${Math.abs(cellB ?? 0).toFixed(1)} m below MSL · raw ${fmtMeters(storm.raw_peak_depth_m)}`
+            : `raw ${fmtMeters(storm.raw_peak_depth_m)}`}
       </div>
     </div>
   );

@@ -35,12 +35,22 @@ const ROWS: MetricRow[] = [
     label: "peak depth",
     value: (s) => {
       const cellB = s.peak_gauge?.b_at_peak_m;
-      const suspect = cellB != null && cellB < -1.0;
+      // old raw-column metric: peak_depth equals the gauge's whole column,
+      // so a below-MSL cell means standing water is counted as inundation;
+      // MSL-referenced reports make peak_depth < column and need no flag
+      const rawColumn =
+        s.peak_depth_m != null &&
+        s.peak_gauge?.depth_m != null &&
+        Math.abs(s.peak_depth_m - s.peak_gauge.depth_m) < 0.005;
+      const suspect = cellB != null && cellB < -1.0 && rawColumn;
       return (
         <>
           {fmtMeters(s.peak_depth_m)}
           {suspect && (
-            <span title="reporting cell below MSL at peak" style={{ color: "#ec835a" }}>
+            <span
+              title="old raw-column metric: includes water below MSL; regenerate the report for the MSL-referenced value"
+              style={{ color: "#ec835a" }}
+            >
               {" "}
               ⚠
             </span>
