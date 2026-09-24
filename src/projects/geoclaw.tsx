@@ -123,32 +123,55 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
   );
 
   // drawn under the surge dots rather than instead of them
-  const mapOverlays = useMemo<MapPointLayer[]>(
-    () =>
-      stability
-        ? [
-            {
-              key: "dvolume",
-              label: "Δvolume",
-              points: stability.cum_cells.map(
-                ([ix, iy, dv]) =>
-                  [
-                    ix * stability.base_dx - 180 + stability.base_dx / 2,
-                    iy * stability.base_dx - 90 + stability.base_dx / 2,
-                    (dv / stability.v0) * 1e9,
-                    "cell",
-                  ] as GaugePoint,
-              ),
-              ramp: DIVERGING_RAMP,
-              diverging: true,
-              unit: "×10⁻⁹ V₀",
-              caption:
-                "Δvolume: where the simulation gained (red) or lost (blue) water volume over its whole run, per 1° cell, from the raw archive",
-            },
-          ]
-        : [],
-    [stability],
-  );
+  const mapOverlays = useMemo<MapPointLayer[]>(() => {
+    if (!stability) return [];
+    // the ramp tops out at the 98th percentile of |dv|: a handful of
+    // artifact cells (the frozen refinement-window offset concentrates at
+    // steep coastal cells) must not set the scale for the whole field
+    const mags = stability.cum_cells
+      .map(([, , dv]) => (Math.abs(dv) / stability.v0) * 1e9)
+      .sort((a, b) => a - b);
+    const maxAbs = mags[mags.length - 1] ?? 0;
+    const p98 = mags[Math.min(mags.length - 1, Math.floor(0.98 * mags.length))] ?? 0;
+    const scaleMax = Math.max(0.1, p98);
+    const fmtMag = (v: number) => (v >= 100 ? v.toFixed(0) : v.toFixed(1));
+    // archive ending at or inside the gauge window means the cumulative
+    // field still carries the (benign) window representation offset
+    const wTfinal = params?.[sid]?.gauge_window_tfinal;
+    const lastT = stability.times_s[stability.times_s.length - 1];
+    const frozenOffset = wTfinal != null && lastT != null && lastT <= wTfinal + 3600;
+    const caption = [
+      "Δvolume: where the simulation gained (red) or lost (blue) water volume over its whole run, per 1° cell, from the raw archive",
+      maxAbs > scaleMax * 1.01
+        ? `colour scale saturates at the 98th percentile; strongest cell ${fmtMag(maxAbs)} ×10⁻⁹ V₀`
+        : null,
+      frozenOffset
+        ? "the archive ends inside the refinement window, so this map mostly shows the benign window offset at steep coastal cells, not this storm's physics"
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return [
+      {
+        key: "dvolume",
+        label: "Δvolume",
+        points: stability.cum_cells.map(
+          ([ix, iy, dv]) =>
+            [
+              ix * stability.base_dx - 180 + stability.base_dx / 2,
+              iy * stability.base_dx - 90 + stability.base_dx / 2,
+              (dv / stability.v0) * 1e9,
+              "cell",
+            ] as GaugePoint,
+        ),
+        ramp: DIVERGING_RAMP,
+        diverging: true,
+        scaleMax,
+        unit: "×10⁻⁹ V₀",
+        caption,
+      },
+    ];
+  }, [stability, params, sid]);
 
   return (
     <>
