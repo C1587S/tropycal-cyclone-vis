@@ -596,11 +596,11 @@ export function StormMap({ layers, overlays, context, track, windowT, windows }:
       }
     }
 
-    const focus = points.length
-      ? points.map((p) => [p[0], p[1]] as [number, number])
-      : track && showTrack
-        ? track.points.map((p) => [p[1], p[2]] as [number, number])
-        : [];
+    // open wide enough to see the whole track, not just the gauge cluster
+    const focus: [number, number][] = points.map((p) => [p[0], p[1]] as [number, number]);
+    if (track && showTrack) {
+      focus.push(...track.points.map((p) => [p[1], p[2]] as [number, number]));
+    }
     const fit = () => {
       if (focus.length) {
         const lons = focus.map((c) => c[0]);
@@ -724,6 +724,9 @@ export function StormMap({ layers, overlays, context, track, windowT, windows }:
         <span className="muted">
           {[
             points.length > 0 && active?.caption ? active.caption : null,
+            ...(overlays ?? [])
+              .filter((ov) => ov.points.length && !hiddenOverlays.includes(ov.key) && ov.caption)
+              .map((ov) => ov.caption),
             active?.total != null && active.total > allPoints.length
               ? `showing the ${allPoints.length.toLocaleString()} highest of ${active.total.toLocaleString()} gauges`
               : null,

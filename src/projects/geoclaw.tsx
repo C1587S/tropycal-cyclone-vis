@@ -135,7 +135,8 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
               ramp: DIVERGING_RAMP,
               diverging: true,
               unit: "×10⁻⁹ V₀",
-              caption: "",
+              caption:
+                "Δvolume: where the simulation gained (red) or lost (blue) water volume over its whole run, per 1° cell, from the raw archive",
             },
           ]
         : [],
@@ -261,6 +262,12 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
                 v={storm.file_size_bytes ? `${(storm.file_size_bytes / 1e6).toFixed(1)} MB` : "–"}
               />
               <Row k="IBTrACS observations" v={fmtCount(storm.numobs)} />
+              {stability === null && (
+                <Row
+                  k="volume budget"
+                  v="not computed for this storm yet (only a few storms have one so far; scripts/volume_budget.py produces it from the raw archive)"
+                />
+              )}
             </tbody>
           </table>
           {stability && (
