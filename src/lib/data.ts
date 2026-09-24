@@ -86,6 +86,14 @@ export interface StormRec {
   n_deep_gauges?: number;
   t_start?: string;
   t_end?: string;
+  /** simulated interval (clawdata t0/tfinal) as absolute times; what the
+   * asymmetric clip shortens, and narrower than the observed track */
+  sim_start?: string;
+  sim_end?: string;
+  sim_t0?: number | null;
+  sim_tfinal?: number | null;
+  stable?: number | null;
+  frac_change?: number | null;
   nan_fraction?: number;
   coarse_only?: boolean;
   b_varying_fraction?: number;

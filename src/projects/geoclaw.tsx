@@ -91,6 +91,13 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
     return [Date.parse(storm.t_start + "Z") / 1000, Date.parse(storm.t_end + "Z") / 1000];
   }, [storm]);
 
+  // the simulated interval, present from per_storm_v4 manifests on; older
+  // runs lack it and draw only the gauge window as before
+  const simT = useMemo<[number, number] | null>(() => {
+    if (!storm.sim_start || !storm.sim_end) return null;
+    return [Date.parse(storm.sim_start + "Z") / 1000, Date.parse(storm.sim_end + "Z") / 1000];
+  }, [storm]);
+
   const notTriggered = storm.status === "not_triggered";
 
   const mapLayers = useMemo<MapPointLayer[]>(
@@ -187,7 +194,7 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
         <div className="storm-grid section">
           <div className="card">
             <h2>Track (not simulated)</h2>
-            <StormMap layers={mapLayers} overlays={mapOverlays} context={detail?.dry} track={track} windowT={windowT} />
+            <StormMap layers={mapLayers} overlays={mapOverlays} context={detail?.dry} track={track} windowT={windowT} simT={simT} />
           </div>
           <div className="card">
             <h2>Why there is no simulation</h2>
@@ -209,7 +216,7 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
           </div>
           <div className="card">
             <h2>Surge map &amp; track</h2>
-            <StormMap layers={mapLayers} overlays={mapOverlays} context={detail?.dry} track={track} windowT={windowT} />
+            <StormMap layers={mapLayers} overlays={mapOverlays} context={detail?.dry} track={track} windowT={windowT} simT={simT} />
           </div>
         </div>
       )}

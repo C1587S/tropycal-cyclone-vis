@@ -134,12 +134,21 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
     () =>
       runs.flatMap((run, i) => {
         const s = storms[run];
-        if (!s?.t_start || !s?.t_end) return [];
+        // the simulated interval where the manifest has it (per_storm_v4 on),
+        // which is what the asymmetric tail clip shortens; older manifests
+        // fall back to the gauge window, labeled so the two are not compared
+        // as if they were the same quantity
+        const pair = s?.sim_start && s?.sim_end
+          ? { a: s.sim_start, b: s.sim_end, label: run }
+          : s?.t_start && s?.t_end
+            ? { a: s.t_start, b: s.t_end, label: `${run} (gauge window)` }
+            : null;
+        if (!pair) return [];
         return [
           {
-            label: run,
+            label: pair.label,
             color: seriesColor(i),
-            t: [Date.parse(s.t_start + "Z") / 1000, Date.parse(s.t_end + "Z") / 1000] as [number, number],
+            t: [Date.parse(pair.a + "Z") / 1000, Date.parse(pair.b + "Z") / 1000] as [number, number],
           },
         ];
       }),

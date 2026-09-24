@@ -67,11 +67,16 @@ interface Props {
   /** background context dots (e.g. dry gauges), drawn small and muted */
   context?: [number, number][] | null;
   track?: Track | null;
-  /** simulated window as epoch seconds; highlights that segment of the track */
+  /** gauge recording window as epoch seconds; highlights that segment of the track */
   windowT?: [number, number] | null;
-  /** several simulated windows overlaid in distinct colors (run comparison);
+  /** several windows overlaid in distinct colors (run comparison);
    * takes precedence over windowT */
   windows?: { label: string; color: string; t: [number, number] }[];
+  /** simulated interval (clawdata t0..tfinal) as epoch seconds; drawn as a
+   * wide soft underlay beneath the window highlight, so the part of the
+   * track GeoClaw actually ran reads apart from the observed track. This is
+   * the interval the asymmetric tail clip shortens. */
+  simT?: [number, number] | null;
 }
 
 /** World basemap with land, admin borders, state names and city labels.
@@ -200,7 +205,7 @@ class RecenterControl implements maplibregl.IControl {
 
 /** MapLibre map of one storm: selectable point overlays and the observed
  * track (simulated window highlighted) over a world basemap. */
-export function StormMap({ layers, overlays, context, track, windowT, windows }: Props) {
+export function StormMap({ layers, overlays, context, track, windowT, windows, simT }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map>();
   const recenterRef = useRef<() => void>(() => undefined);
@@ -281,7 +286,7 @@ export function StormMap({ layers, overlays, context, track, windowT, windows }:
 
     window.clearInterval(antsRef.current);
 
-    const oldIds = ["context", "gauges", "track-full", "track-sim", "track-pts", "track-ends", "track-a", "track-b"];
+    const oldIds = ["context", "gauges", "track-full", "track-sim", "track-simulated", "track-pts", "track-ends", "track-a", "track-b"];
     for (let i = 0; i < 8; i++) oldIds.push(`track-win-${i}`);
     for (const l of map.getStyle().layers ?? []) {
       if (l.id.startsWith("ov-")) oldIds.push(l.id);
@@ -345,6 +350,27 @@ export function StormMap({ layers, overlays, context, track, windowT, windows }:
             map.setPaintProperty("track-full", "line-dasharray", ANTS[step]);
           }
         }, ANTS_STEP_MS);
+      }
+      if (simT) {
+        // the simulated interval, under the window highlight: a wide soft
+        // band whose end shows exactly where the tail clip stopped the run
+        const seg = track.points.filter((p) => p[0] >= simT[0] && p[0] <= simT[1]);
+        if (seg.length > 1) {
+          map.addSource("track-simulated", {
+            type: "geojson",
+            data: {
+              type: "Feature",
+              properties: {},
+              geometry: { type: "LineString", coordinates: seg.map((p) => [p[1], p[2]]) },
+            },
+          });
+          map.addLayer({
+            id: "track-simulated",
+            type: "line",
+            source: "track-simulated",
+            paint: { "line-color": "#7b5fa8", "line-width": 6, "line-opacity": 0.3 },
+          });
+        }
       }
       if (windows?.length) {
         windows.forEach((w, i) => {
@@ -625,7 +651,7 @@ export function StormMap({ layers, overlays, context, track, windowT, windows }:
     recenterRef.current = fit;
     fit();
     return () => window.clearInterval(antsRef.current);
-  }, [active, context, track, showTrack, windowT, windows, points, scaleMin, scaleTop, ready, overlays, hiddenOverlays]);
+  }, [active, context, track, showTrack, windowT, windows, simT, points, scaleMin, scaleTop, ready, overlays, hiddenOverlays]);
 
   if (mapError) {
     return <p className="notice">The map could not initialize (WebGL unavailable): {mapError}</p>;
