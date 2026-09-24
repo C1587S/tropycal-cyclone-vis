@@ -111,7 +111,14 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
         ramp: ORANGE_RAMP,
         caption: "peak inundation depth, land gauges",
       },
-      ...(stability
+    ],
+    [detail, storm],
+  );
+
+  // drawn under the surge dots rather than instead of them
+  const mapOverlays = useMemo<MapPointLayer[]>(
+    () =>
+      stability
         ? [
             {
               key: "dvolume",
@@ -128,12 +135,11 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
               ramp: DIVERGING_RAMP,
               diverging: true,
               unit: "×10⁻⁹ V₀",
-              caption: `cumulative volume change per ${stability.base_dx}° cell over the raw-archive simulation (red: gained)`,
+              caption: "",
             },
           ]
-        : []),
-    ],
-    [detail, storm, stability],
+        : [],
+    [stability],
   );
 
   return (
@@ -180,7 +186,7 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
         <div className="storm-grid section">
           <div className="card">
             <h2>Track (not simulated)</h2>
-            <StormMap layers={mapLayers} context={detail?.dry} track={track} windowT={windowT} />
+            <StormMap layers={mapLayers} overlays={mapOverlays} context={detail?.dry} track={track} windowT={windowT} />
           </div>
           <div className="card">
             <h2>Why there is no simulation</h2>
@@ -202,7 +208,7 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
           </div>
           <div className="card">
             <h2>Surge map &amp; track</h2>
-            <StormMap layers={mapLayers} context={detail?.dry} track={track} windowT={windowT} />
+            <StormMap layers={mapLayers} overlays={mapOverlays} context={detail?.dry} track={track} windowT={windowT} />
           </div>
         </div>
       )}

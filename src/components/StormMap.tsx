@@ -60,6 +60,10 @@ export interface MapPointLayer {
 
 interface Props {
   layers: MapPointLayer[];
+  /** semi-transparent layers drawn UNDER the value dots and toggled
+   * independently of the exclusive layer group (e.g. Δvolume cells),
+   * on by default */
+  overlays?: MapPointLayer[];
   /** background context dots (e.g. dry gauges), drawn small and muted */
   context?: [number, number][] | null;
   track?: Track | null;
@@ -196,7 +200,7 @@ class RecenterControl implements maplibregl.IControl {
 
 /** MapLibre map of one storm: selectable point overlays and the observed
  * track (simulated window highlighted) over a world basemap. */
-export function StormMap({ layers, context, track, windowT, windows }: Props) {
+export function StormMap({ layers, overlays, context, track, windowT, windows }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map>();
   const recenterRef = useRef<() => void>(() => undefined);
@@ -207,6 +211,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
   const [ready, setReady] = useState(false);
   const [mapError, setMapError] = useState<string>();
   const [showTrack, setShowTrack] = useState(true);
+  const [hiddenOverlays, setHiddenOverlays] = useState<string[]>([]);
   // opens at "all": the map starts with every filter at its widest, and the
   // floor is opt-in for hiding the centimeter tail of the top-N export
   const [floor, setFloor] = useState(0);
@@ -278,6 +283,9 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
 
     const oldIds = ["context", "gauges", "track-full", "track-sim", "track-pts", "track-ends", "track-a", "track-b"];
     for (let i = 0; i < 8; i++) oldIds.push(`track-win-${i}`);
+    for (const l of map.getStyle().layers ?? []) {
+      if (l.id.startsWith("ov-")) oldIds.push(l.id);
+    }
     for (const id of oldIds) {
       if (map.getLayer(id)) map.removeLayer(id);
       if (map.getSource(id)) map.removeSource(id);
@@ -290,6 +298,29 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
         type: "circle",
         source: "context",
         paint: { "circle-radius": 1.4, "circle-color": t.baseline, "circle-opacity": 0.55 },
+      });
+    }
+
+    // overlays sit under the value dots, translucent so both read at once
+    for (const ov of overlays ?? []) {
+      if (hiddenOverlays.includes(ov.key) || !ov.points.length) continue;
+      const id = `ov-${ov.key}`;
+      const m = ov.scaleMax ?? Math.max(0.1, ...ov.points.map((p) => Math.abs(p[2])));
+      map.addSource(id, { type: "geojson", data: pointsToGeojson(ov.points) });
+      map.addLayer({
+        id,
+        type: "circle",
+        source: id,
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 4, 5, 11, 7, 30] as never,
+          "circle-color": [
+            "interpolate",
+            ["linear"],
+            ["get", "v"],
+            ...rampStops(ov.ramp, ov.diverging ? -m : 0, m),
+          ] as never,
+          "circle-opacity": 0.35,
+        },
       });
     }
 
@@ -594,7 +625,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
     recenterRef.current = fit;
     fit();
     return () => window.clearInterval(antsRef.current);
-  }, [active, context, track, showTrack, windowT, windows, points, scaleMin, scaleTop, ready]);
+  }, [active, context, track, showTrack, windowT, windows, points, scaleMin, scaleTop, ready, overlays, hiddenOverlays]);
 
   if (mapError) {
     return <p className="notice">The map could not initialize (WebGL unavailable): {mapError}</p>;
@@ -634,22 +665,54 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
             </button>
           </div>
         )}
+        {(overlays ?? [])
+          .filter((ov) => ov.points.length)
+          .map((ov) => {
+            const on = !hiddenOverlays.includes(ov.key);
+            const m = ov.scaleMax ?? Math.max(0.1, ...ov.points.map((p) => Math.abs(p[2])));
+            return (
+              <span key={ov.key} className="sym-legend">
+                <div className="seg-group" role="group" aria-label={`${ov.label} overlay`}>
+                  <button
+                    className={on ? "active" : ""}
+                    onClick={() =>
+                      setHiddenOverlays((prev) =>
+                        on ? [...prev, ov.key] : prev.filter((k) => k !== ov.key),
+                      )
+                    }
+                  >
+                    {ov.label}
+                  </button>
+                </div>
+                {on && (
+                  <>
+                    <span style={{ marginLeft: 6 }}>{ov.diverging ? `−${m.toFixed(1)}` : "0"}</span>
+                    <div className="ramp" style={{ background: rampCss(ov.ramp) }} />
+                    <span>
+                      {ov.diverging ? "+" : ""}
+                      {m.toFixed(1)} {ov.unit ?? "m"}
+                    </span>
+                  </>
+                )}
+              </span>
+            );
+          })}
         {points.length > 0 && (
-          <>
+          <span className="sym-legend">
             <span>{scaleMin < 0 ? `−${scaleTop.toFixed(1)}` : "0"}</span>
-            <div className="ramp" style={{ background: active ? rampCss(active.ramp) : undefined }} />
+            <div className="ramp" style={{ background: active ? rampCss(active.ramp) : undefined, margin: "0 6px" }} />
             <span>
               {scaleMin < 0 ? "+" : ""}
               {scaleTop.toFixed(1)} {active?.unit ?? "m"}
             </span>
-          </>
+          </span>
         )}
         {track && showTrack && track.points.some((p) => p[3] != null) && (
-          <>
+          <span className="sym-legend">
             <span style={{ marginLeft: 8 }}>wind 0</span>
-            <div className="ramp" style={{ background: rampCss(WIND_RAMP) }} />
+            <div className="ramp" style={{ background: rampCss(WIND_RAMP), margin: "0 6px" }} />
             <span>{WIND_MAX_MS} m/s</span>
-          </>
+          </span>
         )}
         {track && showTrack && (
           <span className="sym-legend">
