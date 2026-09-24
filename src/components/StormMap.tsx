@@ -635,34 +635,39 @@ export function StormMap({ layers, overlays, context, track, windowT, windows }:
     <div>
       <div ref={containerRef} className="map-container" />
       <div className="map-legend">
-        {layers.length > 1 && layers.some((l) => l.points.length > 0) && (
-          <div className="seg-group wrap" role="group" aria-label="map metric">
-            {layers.map((l) => (
-              <button
-                key={l.key}
-                className={active?.key === l.key ? "active" : ""}
-                onClick={() => setLayerKey(l.key)}
-              >
-                {l.label}
-                {layerSub(l) && <span className="sub">{layerSub(l)}</span>}
-              </button>
-            ))}
-          </div>
-        )}
         {allPoints.length > 0 && (
-          <div className="seg-group" role="group" aria-label="value floor" title="hide gauges below this value">
-            {[0, 0.1, 0.25, 0.5].map((f) => (
-              <button key={f} className={floor === f ? "active" : ""} onClick={() => setFloor(f)}>
-                {f === 0 ? "all" : `≥${f} m`}
-              </button>
-            ))}
-          </div>
-        )}
-        {track && (
-          <div className="seg-group" role="group" aria-label="track visibility">
-            <button className={showTrack ? "active" : ""} onClick={() => setShowTrack(!showTrack)}>
-              track
-            </button>
+          <div className="legend-group" role="group" aria-label="gauge layer">
+            {layers.length > 1 && layers.some((l) => l.points.length > 0) && (
+              <div className="seg-group wrap" role="group" aria-label="map metric">
+                {layers.map((l) => (
+                  <button
+                    key={l.key}
+                    className={active?.key === l.key ? "active" : ""}
+                    onClick={() => setLayerKey(l.key)}
+                  >
+                    {l.label}
+                    {layerSub(l) && <span className="sub">{layerSub(l)}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="seg-group" role="group" aria-label="value floor" title="hide gauges below this value">
+              {[0, 0.1, 0.25, 0.5].map((f) => (
+                <button key={f} className={floor === f ? "active" : ""} onClick={() => setFloor(f)}>
+                  {f === 0 ? "all" : `≥${f} m`}
+                </button>
+              ))}
+            </div>
+            {points.length > 0 && (
+              <span className="sym-legend">
+                <span>{scaleMin < 0 ? `−${scaleTop.toFixed(1)}` : "0"}</span>
+                <div className="ramp" style={{ background: active ? rampCss(active.ramp) : undefined }} />
+                <span>
+                  {scaleMin < 0 ? "+" : ""}
+                  {scaleTop.toFixed(1)} {active?.unit ?? "m"}
+                </span>
+              </span>
+            )}
           </div>
         )}
         {(overlays ?? [])
@@ -671,8 +676,8 @@ export function StormMap({ layers, overlays, context, track, windowT, windows }:
             const on = !hiddenOverlays.includes(ov.key);
             const m = ov.scaleMax ?? Math.max(0.1, ...ov.points.map((p) => Math.abs(p[2])));
             return (
-              <span key={ov.key} className="sym-legend">
-                <div className="seg-group" role="group" aria-label={`${ov.label} overlay`}>
+              <div key={ov.key} className="legend-group" role="group" aria-label={`${ov.label} overlay`}>
+                <div className="seg-group">
                   <button
                     className={on ? "active" : ""}
                     onClick={() =>
@@ -685,43 +690,42 @@ export function StormMap({ layers, overlays, context, track, windowT, windows }:
                   </button>
                 </div>
                 {on && (
-                  <>
-                    <span style={{ marginLeft: 6 }}>{ov.diverging ? `−${m.toFixed(1)}` : "0"}</span>
+                  <span className="sym-legend">
+                    <span>{ov.diverging ? `−${m.toFixed(1)}` : "0"}</span>
                     <div className="ramp" style={{ background: rampCss(ov.ramp) }} />
                     <span>
                       {ov.diverging ? "+" : ""}
                       {m.toFixed(1)} {ov.unit ?? "m"}
                     </span>
-                  </>
+                  </span>
                 )}
-              </span>
+              </div>
             );
           })}
-        {points.length > 0 && (
-          <span className="sym-legend">
-            <span>{scaleMin < 0 ? `−${scaleTop.toFixed(1)}` : "0"}</span>
-            <div className="ramp" style={{ background: active ? rampCss(active.ramp) : undefined, margin: "0 6px" }} />
-            <span>
-              {scaleMin < 0 ? "+" : ""}
-              {scaleTop.toFixed(1)} {active?.unit ?? "m"}
-            </span>
-          </span>
+        {track && (
+          <div className="legend-group" role="group" aria-label="track layer">
+            <div className="seg-group">
+              <button className={showTrack ? "active" : ""} onClick={() => setShowTrack(!showTrack)}>
+                track
+              </button>
+            </div>
+            {showTrack && track.points.some((p) => p[3] != null) && (
+              <span className="sym-legend">
+                <span>wind 0</span>
+                <div className="ramp" style={{ background: rampCss(WIND_RAMP) }} />
+                <span>{WIND_MAX_MS} m/s</span>
+              </span>
+            )}
+            {showTrack && (
+              <span className="sym-legend">
+                <span className="sym sym-circle" /> start
+                <span className="sym sym-square" /> end
+                <span className="sym sym-ring" /> window
+              </span>
+            )}
+          </div>
         )}
-        {track && showTrack && track.points.some((p) => p[3] != null) && (
-          <span className="sym-legend">
-            <span style={{ marginLeft: 8 }}>wind 0</span>
-            <div className="ramp" style={{ background: rampCss(WIND_RAMP), margin: "0 6px" }} />
-            <span>{WIND_MAX_MS} m/s</span>
-          </span>
-        )}
-        {track && showTrack && (
-          <span className="sym-legend">
-            <span className="sym sym-circle" /> track start
-            <span className="sym sym-square" /> track end
-            <span className="sym sym-ring" /> window start/end
-          </span>
-        )}
-        <span className="muted">
+        <span className="muted legend-caption">
           {[
             points.length > 0 && active?.caption ? active.caption : null,
             ...(overlays ?? [])
