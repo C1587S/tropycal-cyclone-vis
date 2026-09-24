@@ -114,6 +114,8 @@ def main() -> int:
     ap.add_argument("--out", help="write the budget as json.gz here")
     ap.add_argument("--cell-floor", type=float, default=1e-9,
                     help="keep per-frame delta cells above this fraction of V0")
+    ap.add_argument("--map-floor", type=float, default=2e-10,
+                    help="keep cumulative 1-deg map cells above this fraction of V0")
     args = ap.parse_args()
     out_dir = Path(args.run_dir) / "_output"
     qfiles = sorted(out_dir.glob("fort.q[0-9]*"))
@@ -169,17 +171,22 @@ def main() -> int:
     print(f"cumulative dV interior   : {interior / v0:+.3e}")
 
     if args.out:
-        cys, cxs = np.nonzero(np.abs(cum) > args.cell_floor * v0)
+        # the cumulative field is diffuse (a few 1e-10 per base cell spread
+        # over the wetted domain), so the shipped map aggregates to 1 deg
+        # with a floor low enough to keep the storm-path hotspots
+        r = int(round(1.0 / BASE_DX))
+        ny, nx = cum.shape
+        cum1 = cum[: ny - ny % r, : nx - nx % r].reshape(ny // r, r, nx // r, r).sum(axis=(1, 3))
+        cys, cxs = np.nonzero(np.abs(cum1) > args.map_floor * v0)
         payload = {
             "source": str(Path(args.run_dir).resolve()),
-            "base_dx": BASE_DX,
+            "base_dx": 1.0,
             "times_s": times,
             "frac_change": frac,
             "v0": v0,
             "band": {"north": north / v0, "south": south / v0, "interior": interior / v0},
             "band_series": [[b[0] / v0, b[1] / v0, b[2] / v0] for b in band_series],
-            "cum_cells": [[int(x), int(y), float(cum[y, x])] for y, x in zip(cys, cxs)],
-            "frame_deltas": deltas,
+            "cum_cells": [[int(x), int(y), float(cum1[y, x])] for y, x in zip(cys, cxs)],
         }
         raw = json.dumps(payload, separators=(",", ":")).encode()
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)

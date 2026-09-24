@@ -54,6 +54,8 @@ export interface MapPointLayer {
   scaleMax?: number;
   /** signed values on a diverging ramp over [-scaleMax, +scaleMax] */
   diverging?: boolean;
+  /** legend unit, defaults to metres */
+  unit?: string;
 }
 
 interface Props {
@@ -244,7 +246,14 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
     }
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.addControl(new RecenterControl(() => recenterRef.current()), "top-right");
-    map.on("load", () => setReady(true));
+    map.on("load", () => {
+      setReady(true);
+      // the compact attribution control starts expanded; collapse it behind
+      // its info button (the credits stay one click away, licence satisfied)
+      containerRef.current
+        ?.querySelector(".maplibregl-ctrl-attrib")
+        ?.classList.remove("maplibregl-compact-show");
+    });
     mapRef.current = map;
     // the ants tick skips repaints while the map is scrolled out of view
     const io = new IntersectionObserver(([e]) => {
@@ -631,7 +640,7 @@ export function StormMap({ layers, context, track, windowT, windows }: Props) {
             <div className="ramp" style={{ background: active ? rampCss(active.ramp) : undefined }} />
             <span>
               {scaleMin < 0 ? "+" : ""}
-              {scaleTop.toFixed(1)} m
+              {scaleTop.toFixed(1)} {active?.unit ?? "m"}
             </span>
           </>
         )}

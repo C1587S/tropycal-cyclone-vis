@@ -195,6 +195,21 @@ export interface StormParams {
   error?: string;
 }
 
+/** Volume budget of a storm's raw-archive simulation (volume_budget.py).
+ * Exists only for storms whose raw output was archived, in practice the
+ * unstable ones. Times share the run clock (seconds relative to closest
+ * approach); cum_cells are [ix, iy, dV] on the base_dx grid. */
+export interface StabilityBudget {
+  source: string;
+  base_dx: number;
+  times_s: number[];
+  frac_change: number[];
+  v0: number;
+  band: { north: number; south: number; interior: number };
+  band_series: [number, number, number][];
+  cum_cells: [number, number, number][];
+}
+
 export interface Basemap {
   extent: [number, number, number, number];
   state_lines: [number, number][][];
@@ -261,6 +276,8 @@ export const getParams = (project: string, run: string) =>
 export const getTrack = (project: string, catalogue: string, sid: string) =>
   fetchOptional<Track>(`${project}/catalogues/${catalogue}/tracks/${sid}.json`);
 export const getBasemap = () => fetchJson<Basemap>("basemap.json");
+export const getStability = (project: string, sid: string) =>
+  fetchOptional<StabilityBudget>(`${project}/stability/${sid}.json.gz`);
 
 export const animUrl = (project: string, run: string, sid: string, suffix = "") =>
   `${BASE}/${project}/runs/${run}/anim/${sid}${suffix}.mp4`;

@@ -4,21 +4,26 @@ import { ParamsCard } from "../components/ParamsCard";
 import { SeriesChart } from "../components/SeriesChart";
 import { StatusChip } from "../components/StatusChip";
 import { StormMap, type MapPointLayer } from "../components/StormMap";
+import type { EChartsOption } from "echarts";
+import { EChart } from "../components/EChart";
 import {
   catalogueName,
   getAnimIndex,
   getParams,
   getSeries,
+  getStability,
   getStormDetail,
   getTrack,
   type AnimEntry,
+  type GaugePoint,
+  type StabilityBudget,
   type StormDetail,
   type StormParams,
   type StormSeries,
   type Track,
 } from "../lib/data";
 import { fmtCount, fmtMem, fmtMeters, fmtRuntime, fmtWhen } from "../lib/format";
-import { BLUE_RAMP, ORANGE_RAMP } from "../lib/palette";
+import { BLUE_RAMP, chartTheme, DIVERGING_RAMP, ORANGE_RAMP } from "../lib/palette";
 import { GeoclawCompareBody } from "./geoclawCompare";
 import type { ProjectView, StormBodyProps } from "./types";
 
@@ -66,15 +71,18 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
   const [animIndex, setAnimIndex] = useState<Record<string, AnimEntry> | null>();
   const [params, setParams] = useState<Record<string, StormParams> | null>();
   const [track, setTrack] = useState<Track | null>();
+  const [stability, setStability] = useState<StabilityBudget | null>();
 
   useEffect(() => {
     setDetail(undefined);
     setSeries(undefined);
     setTrack(undefined);
+    setStability(undefined);
     getStormDetail(projectId, runId, sid).then(setDetail, () => setDetail(null));
     getSeries(projectId, runId, sid).then(setSeries);
     getAnimIndex(projectId, runId).then(setAnimIndex);
     getParams(projectId, runId).then(setParams);
+    getStability(projectId, sid).then(setStability);
     getTrack(projectId, catalogueName(manifest.run.catalogue), sid).then(setTrack);
   }, [projectId, runId, sid, manifest]);
 
@@ -103,8 +111,29 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
         ramp: ORANGE_RAMP,
         caption: "peak inundation depth, land gauges",
       },
+      ...(stability
+        ? [
+            {
+              key: "dvolume",
+              label: "Δvolume",
+              points: stability.cum_cells.map(
+                ([ix, iy, dv]) =>
+                  [
+                    ix * stability.base_dx - 180 + stability.base_dx / 2,
+                    iy * stability.base_dx - 90 + stability.base_dx / 2,
+                    (dv / stability.v0) * 1e9,
+                    "cell",
+                  ] as GaugePoint,
+              ),
+              ramp: DIVERGING_RAMP,
+              diverging: true,
+              unit: "×10⁻⁹ V₀",
+              caption: `cumulative volume change per ${stability.base_dx}° cell over the raw-archive simulation (red: gained)`,
+            },
+          ]
+        : []),
     ],
-    [detail, storm],
+    [detail, storm, stability],
   );
 
   return (
@@ -228,9 +257,102 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
               <Row k="IBTrACS observations" v={fmtCount(storm.numobs)} />
             </tbody>
           </table>
+          {stability && (
+            <StabilityChart
+              stability={stability}
+              gaugeWindow={
+                params?.[sid]?.gauge_window_t0 != null && params?.[sid]?.gauge_window_tfinal != null
+                  ? [params[sid].gauge_window_t0!, params[sid].gauge_window_tfinal!]
+                  : null
+              }
+            />
+          )}
         </div>
       </div>
     </>
+  );
+}
+
+/** Total-volume drift of the raw-archive simulation, in units of 1e-6 of
+ * the initial volume (the stability threshold's own scale), with the gauge
+ * window shaded: change outside it never touches what the run is scored
+ * on. Sits with the run metrics rather than as its own card. */
+function StabilityChart({ stability, gaugeWindow }: {
+  stability: StabilityBudget;
+  gaugeWindow: [number, number] | null;
+}) {
+  const t = chartTheme();
+  const pts = stability.times_s.map((ts, i) => [ts / 3600, stability.frac_change[i] * 1e6]);
+  const option: EChartsOption = {
+    backgroundColor: "transparent",
+    grid: { left: 46, right: 14, top: 30, bottom: 34 },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (v) => `${(v as number).toFixed(3)} ×10⁻⁶`,
+    },
+    xAxis: {
+      type: "value",
+      name: "hours from closest approach",
+      nameLocation: "middle",
+      nameGap: 24,
+      nameTextStyle: { color: t.textMuted, fontSize: 11 },
+      axisLabel: { color: t.textMuted, fontSize: 10 },
+      splitLine: { show: false },
+    },
+    yAxis: {
+      type: "value",
+      name: "ΔV/V₀ ×10⁻⁶",
+      nameTextStyle: { color: t.textMuted, fontSize: 11 },
+      axisLabel: { color: t.textMuted, fontSize: 10 },
+      splitLine: { lineStyle: { color: t.grid } },
+    },
+    series: [
+      {
+        name: "volume drift",
+        type: "line",
+        data: pts,
+        showSymbol: false,
+        lineStyle: { width: 2, color: t.series1 },
+        itemStyle: { color: t.series1 },
+        markLine: {
+          silent: true,
+          symbol: "none",
+          lineStyle: { color: "#ec835a", type: "dashed", width: 1 },
+          label: {
+            formatter: "1×10⁻⁶ threshold",
+            position: "insideEndTop",
+            color: t.textSecondary,
+            fontSize: 10,
+          },
+          data: [{ yAxis: 1 }],
+        },
+        markArea: gaugeWindow
+          ? {
+              silent: true,
+              itemStyle: { color: "rgba(42,120,214,0.07)" },
+              label: { color: t.textMuted, fontSize: 10 },
+              data: [
+                [
+                  { name: "gauge window", xAxis: gaugeWindow[0] / 3600 },
+                  { xAxis: gaugeWindow[1] / 3600 },
+                ],
+              ],
+            }
+          : undefined,
+      },
+    ],
+  };
+  return (
+    <div className="section">
+      <div className="secondary" style={{ fontWeight: 600, marginBottom: 4 }}>
+        Volume drift (raw archive)
+      </div>
+      <EChart option={option} height={190} />
+      <p className="muted" style={{ fontSize: 11, marginBottom: 0 }}>
+        from the archived simulation, which may be a domain-expanded retry of this run · the
+        Δvolume map layer shows where the cumulative change sits
+      </p>
+    </div>
   );
 }
 
