@@ -196,8 +196,10 @@ a:hover {
 .compare-table td:first-child {
   color: var(--text-secondary);
 }
-.compare-table td.hl,
-.compare-table th.hl {
+.compare-table tbody tr {
+  cursor: pointer;
+}
+.compare-table tr.hl td {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 

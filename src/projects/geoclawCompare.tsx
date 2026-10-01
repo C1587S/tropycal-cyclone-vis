@@ -57,7 +57,9 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
   const [animIdx, setAnimIdx] = useState<Record<string, Record<string, AnimEntry> | null>>({});
   const [track, setTrack] = useState<Track | null>();
   const [allParams, setAllParams] = useState(false);
-  const [hoverCol, setHoverCol] = useState<number | null>(null);
+  const [hoverRow, setHoverRow] = useState<string | null>(null);
+  // clicked rows stay tinted, so a few metrics can be read side by side
+  const [pinnedRows, setPinnedRows] = useState<string[]>([]);
 
   useEffect(() => {
     for (const run of runs) {
@@ -152,12 +154,7 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
               <tr>
                 <th />
                 {runs.map((run, i) => (
-                  <th
-                    key={run}
-                    className={hoverCol === i ? "hl" : ""}
-                    onMouseEnter={() => setHoverCol(i)}
-                    onMouseLeave={() => setHoverCol(null)}
-                  >
+                  <th key={run}>
                     <span className="dot" style={{ background: seriesColor(i) }} /> {run}
                   </th>
                 ))}
@@ -165,17 +162,20 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
             </thead>
             <tbody>
               {ROWS.map((row) => (
-                <tr key={row.label}>
+                <tr
+                  key={row.label}
+                  className={pinnedRows.includes(row.label) || hoverRow === row.label ? "hl" : ""}
+                  onMouseEnter={() => setHoverRow(row.label)}
+                  onMouseLeave={() => setHoverRow(null)}
+                  onClick={() =>
+                    setPinnedRows((p) =>
+                      p.includes(row.label) ? p.filter((l) => l !== row.label) : [...p, row.label],
+                    )
+                  }
+                >
                   <td>{row.label}</td>
-                  {runs.map((run, i) => (
-                    <td
-                      key={run}
-                      className={hoverCol === i ? "hl" : ""}
-                      onMouseEnter={() => setHoverCol(i)}
-                      onMouseLeave={() => setHoverCol(null)}
-                    >
-                      {storms[run] ? row.value(storms[run]!) : "–"}
-                    </td>
+                  {runs.map((run) => (
+                    <td key={run}>{storms[run] ? row.value(storms[run]!) : "–"}</td>
                   ))}
                 </tr>
               ))}
