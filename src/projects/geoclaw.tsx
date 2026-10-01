@@ -65,6 +65,13 @@ export const geoclaw: ProjectView = {
   CompareBody: GeoclawCompareBody,
 };
 
+/** Runs whose storm pages must not show a volume budget. The budgets
+ * (stability/<sid>.json.gz) are one file per storm for the whole project,
+ * computed from the v4 raw archives; a run that kept no raw output has no
+ * budget of its own, so its pages would pass v4's volume change off as its
+ * own. */
+const RUNS_WITHOUT_VOLUME_BUDGET = new Set(["per_storm_1e5"]);
+
 function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyProps) {
   const [detail, setDetail] = useState<StormDetail | null>();
   const [series, setSeries] = useState<StormSeries | null>();
@@ -82,7 +89,9 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
     getSeries(projectId, runId, sid).then(setSeries);
     getAnimIndex(projectId, runId).then(setAnimIndex);
     getParams(projectId, runId).then(setParams);
-    getStability(projectId, sid).then(setStability);
+    // null, like a storm with no budget: hides the chart and the map layer
+    if (RUNS_WITHOUT_VOLUME_BUDGET.has(runId)) setStability(null);
+    else getStability(projectId, sid).then(setStability);
     getTrack(projectId, catalogueName(manifest.run.catalogue), sid).then(setTrack);
   }, [projectId, runId, sid, manifest]);
 
@@ -269,6 +278,7 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
             <tbody>
               <Row k="status (audited)" v={storm.status} />
               <Row k="status (NetCDF attr)" v={storm.nc_status ?? "–"} />
+              {!notTriggered && <Row k="stability threshold" v={fmtThreshold(params?.[sid])} />}
               <Row k="timesteps" v={fmtCount(storm.n_timesteps)} />
               <Row k="gauges" v={fmtCount(storm.n_gauges)} />
               <Row
@@ -295,7 +305,11 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
               {stability === null && (
                 <Row
                   k="volume budget"
-                  v="not computed for this storm yet (only a few storms have one so far; scripts/volume_budget.py produces it from the raw archive)"
+                  v={
+                    RUNS_WITHOUT_VOLUME_BUDGET.has(runId)
+                      ? "not shown for this run: it kept no raw output to compute one from, and the stored budgets belong to another run"
+                      : "not computed for this storm yet (only a few storms have one so far; scripts/volume_budget.py produces it from the raw archive)"
+                  }
                 />
               )}
             </tbody>
@@ -314,6 +328,29 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
       </div>
     </>
   );
+}
+
+/** pyTC's own default for frac_change_allowed (run_gc_model in
+ * pyTC/geoclaw/controller.py). Runs before 2026-09-24 do not record the
+ * threshold in their params, and all of them were judged against this. */
+const DEFAULT_FRAC_CHANGE_ALLOWED = 1e-6;
+
+/** 1e-5 -> "1×10⁻⁵", the notation the volume chart uses. */
+function fmtPow10(v: number): string {
+  const [mant, exp] = v.toExponential().split("e");
+  const sup = exp.replace("+", "").replace(/[-\d]/g, (c) => "⁻⁰¹²³⁴⁵⁶⁷⁸⁹"["-0123456789".indexOf(c)]);
+  return `${mant}×10${sup}`;
+}
+
+/** The volume-conservation threshold this storm's run was judged against,
+ * and how it differs from the default when it does, since a storm judged
+ * against another value is not comparable at face value. */
+function fmtThreshold(params?: StormParams | null): string {
+  const raw = params?.params?.frac_change_allowed;
+  const v = typeof raw === "number" ? raw : DEFAULT_FRAC_CHANGE_ALLOWED;
+  const d = DEFAULT_FRAC_CHANGE_ALLOWED;
+  if (v === d) return `${fmtPow10(v)} (pyTC default)`;
+  return `${fmtPow10(v)} (${v > d ? "raised" : "lowered"} from pyTC's default ${fmtPow10(d)})`;
 }
 
 /** Total-volume drift of the raw-archive simulation, in units of 1e-6 of
