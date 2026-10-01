@@ -130,25 +130,36 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
     return out;
   }, [runs, manifests, sid]);
 
+  // gauge windows only: the one interval every manifest records, so the
+  // runs are compared on the same quantity
   const windows = useMemo(
     () =>
       runs.flatMap((run, i) => {
         const s = storms[run];
-        // the simulated interval where the manifest has it (per_storm_v4 on),
-        // which is what the asymmetric tail clip shortens; older manifests
-        // fall back to the gauge window, labeled so the two are not compared
-        // as if they were the same quantity
-        const pair = s?.sim_start && s?.sim_end
-          ? { a: s.sim_start, b: s.sim_end, label: run }
-          : s?.t_start && s?.t_end
-            ? { a: s.t_start, b: s.t_end, label: `${run} (gauge window)` }
-            : null;
-        if (!pair) return [];
+        if (!s?.t_start || !s?.t_end) return [];
         return [
           {
-            label: pair.label,
+            label: run,
             color: seriesColor(i),
-            t: [Date.parse(pair.a + "Z") / 1000, Date.parse(pair.b + "Z") / 1000] as [number, number],
+            t: [Date.parse(s.t_start + "Z") / 1000, Date.parse(s.t_end + "Z") / 1000] as [number, number],
+          },
+        ];
+      }),
+    [runs, storms],
+  );
+
+  // simulated intervals, drawn as soft underlays only for runs that record
+  // them; older manifests have no sim_start/sim_end, and the caption says so
+  const simTs = useMemo(
+    () =>
+      runs.flatMap((run, i) => {
+        const s = storms[run];
+        if (!s?.sim_start || !s?.sim_end) return [];
+        return [
+          {
+            label: run,
+            color: seriesColor(i),
+            t: [Date.parse(s.sim_start + "Z") / 1000, Date.parse(s.sim_end + "Z") / 1000] as [number, number],
           },
         ];
       }),
@@ -212,7 +223,7 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
 
       <div className="card section">
         <h2>Surge in one frame</h2>
-        <CompareMap runs={runs} storms={storms} details={details} track={track} windows={windows} />
+        <CompareMap runs={runs} storms={storms} details={details} track={track} windows={windows} simTs={simTs} />
       </div>
 
       <div className="card section">
@@ -266,15 +277,16 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
 
 /** All runs' peak surge on one map: a layer per run on a shared color
  * scale, plus a per-gauge difference layer for each adjacent pair of
- * selected runs on a diverging scale. The runs' simulated windows draw on
- * the track here too; identical windows collapse to one segment and a
- * sentence instead of indistinguishable overlapping lines. */
-function CompareMap({ runs, storms, details, track, windows }: {
+ * selected runs on a diverging scale. The runs' gauge windows draw on the
+ * track here too (identical windows collapse to one segment and a sentence),
+ * with the simulated interval as a wide soft band for runs that record it. */
+function CompareMap({ runs, storms, details, track, windows, simTs }: {
   runs: string[];
   storms: Record<string, StormRec | undefined>;
   details: Record<string, StormDetail | null>;
   track?: Track | null;
   windows: { label: string; color: string; t: [number, number] }[];
+  simTs: { label: string; color: string; t: [number, number] }[];
 }) {
   // identical within a minute: window bounds carry seconds-level jitter
   // from the output cadence that is not a real difference between runs
@@ -324,13 +336,25 @@ function CompareMap({ runs, storms, details, track, windows }: {
   return (
     <div>
       {identicalWindows || windows.length <= 1 ? (
-        <StormMap layers={layers} track={track} windowT={windows[0]?.t ?? null} />
+        <StormMap layers={layers} track={track} windowT={windows[0]?.t ?? null} simTs={simTs} />
       ) : (
-        <StormMap layers={layers} track={track} windows={windows} />
+        <StormMap layers={layers} track={track} windows={windows} simTs={simTs} />
       )}
       {identicalWindows && (
         <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
-          simulated window identical across runs: {fmtWhen(first?.t_start)} to {fmtWhen(first?.t_end)}
+          gauge window identical across runs: {fmtWhen(first?.t_start)} to {fmtWhen(first?.t_end)}
+        </p>
+      )}
+      {simTs.length > 0 && simTs.length < runs.length && (
+        <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
+          wide band: the simulated interval, recorded only by {simTs.map((s) => s.label).join(", ")};{" "}
+          {runs.filter((r) => !simTs.some((s) => s.label === r)).join(", ")} simulated this storm too,
+          but older manifests do not record the interval
+        </p>
+      )}
+      {simTs.length > 0 && simTs.length === runs.length && (
+        <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
+          wide bands: each run's simulated interval
         </p>
       )}
       {!identicalWindows && windows.length > 1 && (

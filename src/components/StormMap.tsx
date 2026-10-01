@@ -77,6 +77,10 @@ interface Props {
    * track GeoClaw actually ran reads apart from the observed track. This is
    * the interval the asymmetric tail clip shortens. */
   simT?: [number, number] | null;
+  /** several simulated intervals (run comparison), one soft band per run in
+   * the run's color; takes precedence over simT. Runs whose manifests do
+   * not record the interval simply pass none. */
+  simTs?: { label: string; color?: string; t: [number, number] }[];
 }
 
 /** World basemap with land, admin borders, state names and city labels.
@@ -205,7 +209,7 @@ class RecenterControl implements maplibregl.IControl {
 
 /** MapLibre map of one storm: selectable point overlays and the observed
  * track (simulated window highlighted) over a world basemap. */
-export function StormMap({ layers, overlays, context, track, windowT, windows, simT }: Props) {
+export function StormMap({ layers, overlays, context, track, windowT, windows, simT, simTs }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map>();
   const recenterRef = useRef<() => void>(() => undefined);
@@ -287,7 +291,7 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
     window.clearInterval(antsRef.current);
 
     const oldIds = ["context", "gauges", "track-full", "track-sim", "track-simulated", "track-pts", "track-ends", "track-a", "track-b"];
-    for (let i = 0; i < 8; i++) oldIds.push(`track-win-${i}`);
+    for (let i = 0; i < 8; i++) oldIds.push(`track-win-${i}`, `track-simulated-${i}`);
     for (const l of map.getStyle().layers ?? []) {
       if (l.id.startsWith("ov-")) oldIds.push(l.id);
     }
@@ -351,27 +355,33 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
           }
         }, ANTS_STEP_MS);
       }
-      if (simT) {
-        // the simulated interval, under the window highlight: a wide soft
-        // band whose end shows exactly where the tail clip stopped the run
-        const seg = track.points.filter((p) => p[0] >= simT[0] && p[0] <= simT[1]);
-        if (seg.length > 1) {
-          map.addSource("track-simulated", {
-            type: "geojson",
-            data: {
-              type: "Feature",
-              properties: {},
-              geometry: { type: "LineString", coordinates: seg.map((p) => [p[1], p[2]]) },
-            },
-          });
-          map.addLayer({
-            id: "track-simulated",
-            type: "line",
-            source: "track-simulated",
-            paint: { "line-color": "#7b5fa8", "line-width": 6, "line-opacity": 0.3 },
-          });
-        }
-      }
+      // the simulated interval(s), under the window highlight: wide soft
+      // bands whose ends show exactly where the tail clip stopped each run
+      const simBands = simTs ?? (simT ? [{ label: "", color: undefined, t: simT }] : []);
+      simBands.forEach((band, i) => {
+        const seg = track.points.filter((p) => p[0] >= band.t[0] && p[0] <= band.t[1]);
+        if (seg.length < 2) return;
+        const id = `track-simulated-${i}`;
+        map.addSource(id, {
+          type: "geojson",
+          data: {
+            type: "Feature",
+            properties: {},
+            geometry: { type: "LineString", coordinates: seg.map((p) => [p[1], p[2]]) },
+          },
+        });
+        // stagger widths so nested identical bands stay distinguishable
+        map.addLayer({
+          id,
+          type: "line",
+          source: id,
+          paint: {
+            "line-color": band.color ?? "#7b5fa8",
+            "line-width": 6 + (simBands.length - 1 - i) * 3,
+            "line-opacity": 0.28,
+          },
+        });
+      });
       if (windows?.length) {
         windows.forEach((w, i) => {
           const sim = track.points.filter((p) => p[0] >= w.t[0] && p[0] <= w.t[1]);
@@ -651,7 +661,7 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
     recenterRef.current = fit;
     fit();
     return () => window.clearInterval(antsRef.current);
-  }, [active, context, track, showTrack, windowT, windows, simT, points, scaleMin, scaleTop, ready, overlays, hiddenOverlays]);
+  }, [active, context, track, showTrack, windowT, windows, simT, simTs, points, scaleMin, scaleTop, ready, overlays, hiddenOverlays]);
 
   if (mapError) {
     return <p className="notice">The map could not initialize (WebGL unavailable): {mapError}</p>;
@@ -762,7 +772,7 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
               : null,
             hidden > 0 ? `${hidden.toLocaleString()} below ${floor} m hidden` : null,
             track && showTrack
-              ? `dashed: observed track (vertices coloured by wind), solid: simulated window${windows?.length ? "s" : ""}`
+              ? `dashed: observed track (vertices coloured by wind), solid: gauge window${windows?.length ? "s" : ""}`
               : null,
           ]
             .filter(Boolean)
