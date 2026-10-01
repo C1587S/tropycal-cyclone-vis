@@ -49,7 +49,7 @@ export function StormPage() {
         <span className="muted mono">{storm.sid}</span>
         <span style={{ flex: 1 }} />
         {otherRuns.length > 0 && (
-          <Link className="btn" to={`/p/${projectId}/compare/${sid}`}>
+          <Link className="btn" to={`/p/${projectId}/compare/${sid}?runs=${runId}`}>
             compare runs
           </Link>
         )}

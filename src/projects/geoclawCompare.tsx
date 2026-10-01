@@ -9,7 +9,6 @@ import {
   getStormDetail,
   getTrack,
   type AnimEntry,
-  type GaugePoint,
   type StormDetail,
   type StormParams,
   type StormRec,
@@ -17,7 +16,7 @@ import {
 } from "../lib/data";
 import { fmtCount, fmtMem, fmtMeters, fmtRelHours, fmtRuntime, fmtWhen } from "../lib/format";
 import { panelSeekTime, panelVideos, type PanelVideo } from "../lib/panels";
-import { BLUE_RAMP, DIVERGING_RAMP, seriesColor } from "../lib/palette";
+import { BLUE_RAMP, seriesColor } from "../lib/palette";
 import type { CompareBodyProps } from "./types";
 
 interface MetricRow {
@@ -31,35 +30,7 @@ const ROWS: MetricRow[] = [
   { label: "status", value: (s) => <StatusChip status={s.status} />, raw: (s) => s.status },
   { label: "peak surge", value: (s) => fmtMeters(s.peak_surge_m), raw: (s) => fmtMeters(s.peak_surge_m) },
   { label: "peak surge time", value: (s) => fmtWhen(s.peak_surge_time), raw: (s) => s.peak_surge_time ?? "" },
-  {
-    label: "peak depth",
-    value: (s) => {
-      const cellB = s.peak_gauge?.b_at_peak_m;
-      // old raw-column metric: peak_depth equals the gauge's whole column,
-      // so a below-MSL cell means standing water is counted as inundation;
-      // MSL-referenced reports make peak_depth < column and need no flag
-      const rawColumn =
-        s.peak_depth_m != null &&
-        s.peak_gauge?.depth_m != null &&
-        Math.abs(s.peak_depth_m - s.peak_gauge.depth_m) < 0.005;
-      const suspect = cellB != null && cellB < -1.0 && rawColumn;
-      return (
-        <>
-          {fmtMeters(s.peak_depth_m)}
-          {suspect && (
-            <span
-              title="old raw-column metric: includes water below MSL; regenerate the report for the MSL-referenced value"
-              style={{ color: "#ec835a" }}
-            >
-              {" "}
-              ⚠
-            </span>
-          )}
-        </>
-      );
-    },
-    raw: (s) => fmtMeters(s.peak_depth_m),
-  },
+  { label: "peak depth", value: (s) => fmtMeters(s.peak_depth_m), raw: (s) => fmtMeters(s.peak_depth_m) },
   { label: "raw peak depth", value: (s) => fmtMeters(s.raw_peak_depth_m), raw: (s) => fmtMeters(s.raw_peak_depth_m) },
   { label: "sl_init", value: (s) => fmtMeters(s.sl_init_m), raw: (s) => fmtMeters(s.sl_init_m) },
   { label: "wet gauges", value: (s) => fmtCount(s.wet_gauges), raw: (s) => String(s.wet_gauges ?? "") },
@@ -76,20 +47,6 @@ const ROWS: MetricRow[] = [
   { label: "slurm array", value: (s) => (s.array_job ? `${s.array_job}[${s.array_index}]` : "–"), raw: (s) => s.array_job ?? "" },
 ];
 
-/** Per-gauge surge difference between two runs, joined on the gauge id
- * (gauge placement is deterministic, so ids are stable across runs). Only
- * gauges present in both runs' exported point sets contribute. */
-function diffPoints(a?: GaugePoint[], b?: GaugePoint[]): GaugePoint[] {
-  if (!a?.length || !b?.length) return [];
-  const byId = new Map(a.map((p) => [p[3], p[2]]));
-  const out: GaugePoint[] = [];
-  for (const p of b) {
-    const va = byId.get(p[3]);
-    if (va !== undefined) out.push([p[0], p[1], +(p[2] - va).toFixed(3), p[3]]);
-  }
-  return out;
-}
-
 /** One storm, several runs: numbers in one table, all runs' surge on one
  * map (per-run layers plus per-gauge difference layers), simulated windows
  * overlaid on the shared observed track, animations synchronised on the
@@ -100,6 +57,7 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
   const [animIdx, setAnimIdx] = useState<Record<string, Record<string, AnimEntry> | null>>({});
   const [track, setTrack] = useState<Track | null>();
   const [allParams, setAllParams] = useState(false);
+  const [hoverCol, setHoverCol] = useState<number | null>(null);
 
   useEffect(() => {
     for (const run of runs) {
@@ -194,31 +152,36 @@ export function GeoclawCompareBody({ projectId, sid, runs, manifests }: CompareB
               <tr>
                 <th />
                 {runs.map((run, i) => (
-                  <th key={run}>
+                  <th
+                    key={run}
+                    className={hoverCol === i ? "hl" : ""}
+                    onMouseEnter={() => setHoverCol(i)}
+                    onMouseLeave={() => setHoverCol(null)}
+                  >
                     <span className="dot" style={{ background: seriesColor(i) }} /> {run}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {ROWS.map((row) => {
-                const raws = runs.map((run) => (storms[run] ? row.raw(storms[run]!) : "–"));
-                const differs = new Set(raws).size > 1;
-                return (
-                  <tr key={row.label} className={differs ? "diff" : ""}>
-                    <td>{row.label}</td>
-                    {runs.map((run) => (
-                      <td key={run}>{storms[run] ? row.value(storms[run]!) : "–"}</td>
-                    ))}
-                  </tr>
-                );
-              })}
+              {ROWS.map((row) => (
+                <tr key={row.label}>
+                  <td>{row.label}</td>
+                  {runs.map((run, i) => (
+                    <td
+                      key={run}
+                      className={hoverCol === i ? "hl" : ""}
+                      onMouseEnter={() => setHoverCol(i)}
+                      onMouseLeave={() => setHoverCol(null)}
+                    >
+                      {storms[run] ? row.value(storms[run]!) : "–"}
+                    </td>
+                  ))}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
-        <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
-          highlighted rows differ between runs
-        </p>
       </div>
 
       <div className="card section">
@@ -298,37 +261,15 @@ function CompareMap({ runs, storms, details, track, windows, simTs }: {
       0.1,
       ...runs.flatMap((run) => (details[run]?.surge_gauge_points ?? []).map((p) => p[2])),
     );
-    const runLayers: MapPointLayer[] = runs.map((run) => ({
+    return runs.map((run) => ({
       key: run,
       label: run,
       points: details[run]?.surge_gauge_points ?? [],
       total: storms[run]?.n_surge_points_total,
       ramp: BLUE_RAMP,
       scaleMax: sharedMax,
-      caption: `peak surge in ${run} (color scale shared across runs)`,
+      caption: "peak surge at each enabled run's exported gauges (colour scale shared across runs)",
     }));
-    // every pair, not just adjacent ones: with three runs the end-to-end
-    // comparison (last vs first) is usually the one that matters most
-    const deltaLayers: MapPointLayer[] = [];
-    for (let i = 1; i < runs.length; i++) {
-      for (let j = 0; j < i; j++) {
-        const a = runs[j];
-        const b = runs[i];
-        const pts = diffPoints(details[a]?.surge_gauge_points, details[b]?.surge_gauge_points);
-        if (!pts.length) continue;
-        const dmax = Math.max(0.1, ...pts.map((p) => Math.abs(p[2])));
-        deltaLayers.push({
-          key: `delta-${j}-${i}`,
-          label: `Δ ${b} − ${a}`,
-          points: pts,
-          ramp: DIVERGING_RAMP,
-          diverging: true,
-          scaleMax: dmax,
-          caption: `surge difference at the ${pts.length.toLocaleString()} gauges present in both exports (red: higher in ${b})`,
-        });
-      }
-    }
-    return [...runLayers, ...deltaLayers];
   }, [runs, storms, details]);
 
   const first = storms[runs.find((r) => storms[r]) ?? ""];
@@ -336,9 +277,9 @@ function CompareMap({ runs, storms, details, track, windows, simTs }: {
   return (
     <div>
       {identicalWindows || windows.length <= 1 ? (
-        <StormMap layers={layers} track={track} windowT={windows[0]?.t ?? null} simTs={simTs} />
+        <StormMap layers={layers} multi track={track} windowT={windows[0]?.t ?? null} simTs={simTs} />
       ) : (
-        <StormMap layers={layers} track={track} windows={windows} simTs={simTs} />
+        <StormMap layers={layers} multi track={track} windows={windows} simTs={simTs} />
       )}
       {identicalWindows && (
         <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>

@@ -60,6 +60,10 @@ export interface MapPointLayer {
 
 interface Props {
   layers: MapPointLayer[];
+  /** draw several layers at once, with toggle chips instead of an exclusive
+   * group (run comparison). Windows and sim bands whose label matches a
+   * disabled layer's key are hidden with it. */
+  multi?: boolean;
   /** semi-transparent layers drawn UNDER the value dots and toggled
    * independently of the exclusive layer group (e.g. Δvolume cells),
    * on by default */
@@ -209,7 +213,7 @@ class RecenterControl implements maplibregl.IControl {
 
 /** MapLibre map of one storm: selectable point overlays and the observed
  * track (simulated window highlighted) over a world basemap. */
-export function StormMap({ layers, overlays, context, track, windowT, windows, simT, simTs }: Props) {
+export function StormMap({ layers, multi, overlays, context, track, windowT, windows, simT, simTs }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map>();
   const recenterRef = useRef<() => void>(() => undefined);
@@ -217,6 +221,8 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
   const onScreenRef = useRef(true);
   const [style, setStyle] = useState<maplibregl.StyleSpecification>();
   const [layerKey, setLayerKey] = useState(layers[0]?.key);
+  // multi mode: enabled layer keys; null means all of them
+  const [enabledKeys, setEnabledKeys] = useState<string[] | null>(null);
   const [ready, setReady] = useState(false);
   const [mapError, setMapError] = useState<string>();
   const [showTrack, setShowTrack] = useState(true);
@@ -229,8 +235,19 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
     resolveStyle().then(setStyle, (e) => setMapError(String(e)));
   }, []);
 
-  const active = layers.find((l) => l.key === layerKey) ?? layers[0];
-  const allPoints = active?.points ?? [];
+  const activeKeys = useMemo(
+    () => (multi ? (enabledKeys ?? layers.map((l) => l.key)) : []),
+    [multi, enabledKeys, layers],
+  );
+  const activeLayers = useMemo(
+    () => (multi ? layers.filter((l) => activeKeys.includes(l.key) && l.points.length) : []),
+    [multi, layers, activeKeys],
+  );
+  const active = multi ? activeLayers[0] : (layers.find((l) => l.key === layerKey) ?? layers[0]);
+  const allPoints = useMemo(
+    () => (multi ? activeLayers.flatMap((l) => l.points) : (active?.points ?? [])),
+    [multi, activeLayers, active],
+  );
   const points = useMemo(
     () => (floor > 0 ? allPoints.filter((p) => Math.abs(p[2]) >= floor) : allPoints),
     [allPoints, floor],
@@ -291,7 +308,7 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
     window.clearInterval(antsRef.current);
 
     const oldIds = ["context", "gauges", "track-full", "track-sim", "track-simulated", "track-pts", "track-ends", "track-a", "track-b"];
-    for (let i = 0; i < 8; i++) oldIds.push(`track-win-${i}`, `track-simulated-${i}`);
+    for (let i = 0; i < 8; i++) oldIds.push(`track-win-${i}`, `track-simulated-${i}`, `gauges-${i}`);
     for (const l of map.getStyle().layers ?? []) {
       if (l.id.startsWith("ov-")) oldIds.push(l.id);
     }
@@ -357,7 +374,9 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
       }
       // the simulated interval(s), under the window highlight: wide soft
       // bands whose ends show exactly where the tail clip stopped each run
-      const simBands = simTs ?? (simT ? [{ label: "", color: undefined, t: simT }] : []);
+      const simBands = (simTs ?? (simT ? [{ label: "", color: undefined, t: simT }] : [])).filter(
+        (b) => !multi || !b.label || activeKeys.includes(b.label),
+      );
       simBands.forEach((band, i) => {
         const seg = track.points.filter((p) => p[0] >= band.t[0] && p[0] <= band.t[1]);
         if (seg.length < 2) return;
@@ -382,8 +401,9 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
           },
         });
       });
-      if (windows?.length) {
-        windows.forEach((w, i) => {
+      const shownWindows = windows?.filter((w) => !multi || activeKeys.includes(w.label));
+      if (shownWindows?.length) {
+        shownWindows.forEach((w, i) => {
           const sim = track.points.filter((p) => p[0] >= w.t[0] && p[0] <= w.t[1]);
           if (sim.length < 2) return;
           const id = `track-win-${i}`;
@@ -402,7 +422,7 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
             source: id,
             paint: {
               "line-color": w.color,
-              "line-width": 2 + (windows.length - 1 - i) * 2.4,
+              "line-width": 2 + (shownWindows.length - 1 - i) * 2.4,
               "line-opacity": 0.9,
             },
           });
@@ -536,29 +556,34 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
       }
     }
 
-    if (points.length) {
-      map.addSource("gauges", { type: "geojson", data: pointsToGeojson(points) });
+    const drawLayers = multi ? activeLayers : active ? [active] : [];
+    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
+    drawLayers.forEach((lyr, idx) => {
+      const pts = floor > 0 ? lyr.points.filter((p) => Math.abs(p[2]) >= floor) : lyr.points;
+      if (!pts.length) return;
+      const gid = `gauges-${idx}`;
+      const top = lyr.scaleMax ?? scaleTop;
+      const min = lyr.diverging ? -top : 0;
+      map.addSource(gid, { type: "geojson", data: pointsToGeojson(pts) });
       map.addLayer({
-        id: "gauges",
+        id: gid,
         type: "circle",
-        source: "gauges",
+        source: gid,
         paint: {
-          "circle-radius": active.diverging
-            ? (["interpolate", ["linear"], ["get", "v"], scaleMin, 5.5, 0, 2.2, scaleTop, 5.5] as never)
-            : (["interpolate", ["linear"], ["get", "v"], 0, 2.2, scaleTop, 5.5] as never),
+          "circle-radius": lyr.diverging
+            ? (["interpolate", ["linear"], ["get", "v"], min, 5.5, 0, 2.2, top, 5.5] as never)
+            : (["interpolate", ["linear"], ["get", "v"], 0, 2.2, top, 5.5] as never),
           "circle-color": [
             "interpolate",
             ["linear"],
             ["get", "v"],
-            ...rampStops(active.ramp, scaleMin, scaleTop),
+            ...rampStops(lyr.ramp, min, top),
           ] as never,
           "circle-stroke-color": "#fcfcfb",
           "circle-stroke-width": 0.6,
         },
       });
-
-      const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
-      map.on("mousemove", "gauges", (e) => {
+      map.on("mousemove", gid, (e) => {
         const f = e.features?.[0];
         if (!f) return;
         map.getCanvas().style.cursor = "default";
@@ -566,23 +591,23 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
         popup
           .setLngLat(e.lngLat)
           .setHTML(
-            `<strong>${p.v.toFixed(2)} m</strong> ${active.label}<br/><span style="color:#898781">${p.id}</span>`,
+            `<strong>${p.v.toFixed(2)} m</strong> ${drawLayers.length > 1 ? lyr.key : lyr.label}<br/><span style="color:#898781">${p.id}</span>`,
           )
           .addTo(map);
       });
-      map.on("mouseleave", "gauges", () => {
+      map.on("mouseleave", gid, () => {
         map.getCanvas().style.cursor = "";
         popup.remove();
       });
-    }
+    });
 
     // where each run's simulated interval starts and ends on the track: the
     // clipped tail is visible directly instead of only as a config number
     if (track && showTrack) {
       const winList = windows?.length
-        ? windows
+        ? windows.filter((w) => !multi || activeKeys.includes(w.label))
         : windowT
-          ? [{ label: "simulated window", color: t.textPrimary, t: windowT }]
+          ? [{ label: "gauge window", color: t.textPrimary, t: windowT }]
           : [];
       const endFeatures: GeoJSON.Feature[] = [];
       for (const w of winList) {
@@ -661,7 +686,7 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
     recenterRef.current = fit;
     fit();
     return () => window.clearInterval(antsRef.current);
-  }, [active, context, track, showTrack, windowT, windows, simT, simTs, points, scaleMin, scaleTop, ready, overlays, hiddenOverlays]);
+  }, [active, multi, activeLayers, activeKeys, floor, context, track, showTrack, windowT, windows, simT, simTs, points, scaleMin, scaleTop, ready, overlays, hiddenOverlays]);
 
   if (mapError) {
     return <p className="notice">The map could not initialize (WebGL unavailable): {mapError}</p>;
@@ -678,8 +703,17 @@ export function StormMap({ layers, overlays, context, track, windowT, windows, s
                 {layers.map((l) => (
                   <button
                     key={l.key}
-                    className={active?.key === l.key ? "active" : ""}
-                    onClick={() => setLayerKey(l.key)}
+                    className={(multi ? activeKeys.includes(l.key) : active?.key === l.key) ? "active" : ""}
+                    aria-pressed={multi ? activeKeys.includes(l.key) : undefined}
+                    onClick={() =>
+                      multi
+                        ? setEnabledKeys(
+                            activeKeys.includes(l.key)
+                              ? activeKeys.filter((k) => k !== l.key)
+                              : [...activeKeys, l.key],
+                          )
+                        : setLayerKey(l.key)
+                    }
                   >
                     {l.label}
                     {layerSub(l) && <span className="sub">{layerSub(l)}</span>}

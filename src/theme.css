@@ -196,8 +196,9 @@ a:hover {
 .compare-table td:first-child {
   color: var(--text-secondary);
 }
-.compare-table tr.diff td {
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
+.compare-table td.hl,
+.compare-table th.hl {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 /* storm-page animation panels: wrap grid, panels are peers not columns */
