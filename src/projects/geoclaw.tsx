@@ -278,7 +278,15 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
             <tbody>
               <Row k="status (audited)" v={storm.status} />
               <Row k="status (NetCDF attr)" v={storm.nc_status ?? "–"} />
-              {!notTriggered && <Row k="stability threshold" v={fmtThreshold(params?.[sid])} />}
+              {!notTriggered &&
+                (storm.frac_change != null ? (
+                  <Row
+                    k="volume conservation"
+                    v={`measured ${fmtPow10(storm.frac_change, 2)} vs threshold ${fmtThreshold(params?.[sid])}`}
+                  />
+                ) : (
+                  <Row k="stability threshold" v={fmtThreshold(params?.[sid])} />
+                ))}
               <Row k="timesteps" v={fmtCount(storm.n_timesteps)} />
               <Row k="gauges" v={fmtCount(storm.n_gauges)} />
               <Row
@@ -336,8 +344,8 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
 const DEFAULT_FRAC_CHANGE_ALLOWED = 1e-6;
 
 /** 1e-5 -> "1×10⁻⁵", the notation the volume chart uses. */
-function fmtPow10(v: number): string {
-  const [mant, exp] = v.toExponential().split("e");
+function fmtPow10(v: number, digits?: number): string {
+  const [mant, exp] = v.toExponential(digits).split("e");
   const sup = exp.replace("+", "").replace(/[-\d]/g, (c) => "⁻⁰¹²³⁴⁵⁶⁷⁸⁹"["-0123456789".indexOf(c)]);
   return `${mant}×10${sup}`;
 }
