@@ -199,13 +199,7 @@ function MetricChart({ title, storms, value, fmt, bins, colorKey, hoverSid, pinn
     return {
       backgroundColor: "transparent",
       grid: { left: 52, right: 8, top: 14, bottom: 26 },
-      tooltip: {
-        trigger: "item",
-        formatter: (p) => {
-          const { s, v } = ranked[(p as { dataIndex: number }).dataIndex];
-          return `<strong>${s.name}</strong> ${s.season}<br/>${fmt(v)}`;
-        },
-      },
+      // no tooltip here: the strip above the charts shows the hovered storm
       xAxis: {
         type: "category",
         data: ranked.map((x) => x.s.sid),
