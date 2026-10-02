@@ -203,6 +203,26 @@ a:hover {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
+/* run-page resource charts: the hovered or pinned storm reads here */
+.pin-strip {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  min-height: 24px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.pin-strip .pin-name {
+  font-weight: 650;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.pin-strip .pin-name:hover {
+  text-decoration: underline;
+}
+
 /* storm-page animation panels: wrap grid, panels are peers not columns */
 .panel-grid {
   display: grid;

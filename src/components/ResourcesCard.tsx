@@ -1,6 +1,6 @@
 import type { EChartsOption } from "echarts";
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import type { RunManifest, StormRec } from "../lib/data";
 import { fmtHoursHuman, fmtMem, fmtRuntime } from "../lib/format";
 import { chartTheme } from "../lib/palette";
@@ -18,6 +18,11 @@ export function ResourcesCard({ manifest, stormUrl }: {
   const r = manifest.run;
   const storms = manifest.storms;
   const [hoverSid, setHoverSid] = useState<string | null>(null);
+  // clicking a bar pins the storm, so its numbers stay readable after the
+  // pointer moves on; hovering reads over the pin without clearing it
+  const [pinnedSid, setPinnedSid] = useState<string | null>(null);
+  const shownSid = hoverSid ?? pinnedSid;
+  const shown = shownSid ? storms.find((s) => s.sid === shownSid) : undefined;
 
   const stats = useMemo(() => {
     const mems = storms.map((s) => s.memory_mb).filter((v): v is number => v != null).sort((a, b) => a - b);
@@ -77,6 +82,27 @@ export function ResourcesCard({ manifest, stormUrl }: {
           <div className="detail">max {fmtRuntime(r.runtime_seconds?.max)}</div>
         </div>
       </div>
+      <div className="pin-strip">
+        {shown ? (
+          <>
+            <Link to={stormUrl(shown.sid)} className="pin-name">
+              {shown.name}
+            </Link>
+            <span className="muted">{shown.season}</span>
+            <span>
+              runtime <strong>{fmtRuntime(shown.runtime_seconds)}</strong>
+            </span>
+            <span>
+              memory <strong>{fmtMem(shown.memory_mb)}</strong>
+            </span>
+            {pinnedSid === shown.sid && !hoverSid && (
+              <span className="muted">pinned (click its bar again to unpin)</span>
+            )}
+          </>
+        ) : (
+          <span className="muted">hover a bar to read a storm here; click to pin it</span>
+        )}
+      </div>
       <div className="chart-duo">
         <MetricChart
           title="Runtime"
@@ -92,9 +118,10 @@ export function ResourcesCard({ manifest, stormUrl }: {
             { label: ">3 h", max: Infinity },
           ]}
           colorKey="series1"
-          stormUrl={stormUrl}
           hoverSid={hoverSid}
+          pinnedSid={pinnedSid}
           onHoverSid={setHoverSid}
+          onPinSid={(sid) => setPinnedSid((p) => (p === sid ? null : sid))}
         />
         <MetricChart
           title="Memory"
@@ -110,9 +137,10 @@ export function ResourcesCard({ manifest, stormUrl }: {
             { label: ">16 GB", max: Infinity },
           ]}
           colorKey="series2"
-          stormUrl={stormUrl}
           hoverSid={hoverSid}
+          pinnedSid={pinnedSid}
           onHoverSid={setHoverSid}
+          onPinSid={(sid) => setPinnedSid((p) => (p === sid ? null : sid))}
         />
       </div>
     </div>
@@ -124,20 +152,20 @@ interface Bin {
   max: number;
 }
 
-function MetricChart({ title, storms, value, fmt, bins, colorKey, stormUrl, hoverSid, onHoverSid }: {
+function MetricChart({ title, storms, value, fmt, bins, colorKey, hoverSid, pinnedSid, onHoverSid, onPinSid }: {
   title: string;
   storms: StormRec[];
   value: (s: StormRec) => number | null;
   fmt: (v: number) => string;
   bins: Bin[];
   colorKey: "series1" | "series2";
-  stormUrl: (sid: string) => string;
   hoverSid: string | null;
+  pinnedSid: string | null;
   onHoverSid: (sid: string | null) => void;
+  onPinSid: (sid: string) => void;
 }) {
   // per storm by default: the bins hide which storm is which
   const [mode, setMode] = useState<"bins" | "storms">("storms");
-  const navigate = useNavigate();
   const t = chartTheme();
   const color = t[colorKey];
 
@@ -184,7 +212,7 @@ function MetricChart({ title, storms, value, fmt, bins, colorKey, stormUrl, hove
         axisLabel: { show: false },
         axisLine: axis.axisLine,
         axisTick: { show: false },
-        name: `storms, largest first (click to open)`,
+        name: `storms, largest first (click to pin)`,
         nameLocation: "middle",
         nameGap: 12,
         nameTextStyle: { color: t.textMuted, fontSize: 11 },
@@ -198,17 +226,17 @@ function MetricChart({ title, storms, value, fmt, bins, colorKey, stormUrl, hove
         {
           type: "bar",
           name: title,
-          // the storm hovered in either chart reads in primary ink in both,
-          // so compute time and memory line up for one storm at a glance
+          // the storm hovered or pinned in either chart reads in primary ink
+          // in both, so compute time and memory line up for one storm
           data: ranked.map((x) => ({
             value: x.v,
-            itemStyle: x.s.sid === hoverSid ? { color: t.textPrimary } : { color },
+            itemStyle: x.s.sid === hoverSid || x.s.sid === pinnedSid ? { color: t.textPrimary } : { color },
           })),
           barCategoryGap: "10%",
         },
       ],
     };
-  }, [mode, ranked, bins, color, t, fmt, title, hoverSid]);
+  }, [mode, ranked, bins, color, t, fmt, title, hoverSid, pinnedSid]);
 
   return (
     <div>
@@ -227,7 +255,7 @@ function MetricChart({ title, storms, value, fmt, bins, colorKey, stormUrl, hove
         option={option}
         height={200}
         onClick={(p) => {
-          if (mode === "storms" && ranked[p.dataIndex]) navigate(stormUrl(ranked[p.dataIndex].s.sid));
+          if (mode === "storms" && ranked[p.dataIndex]) onPinSid(ranked[p.dataIndex].s.sid);
         }}
         onHover={(p) => {
           if (mode === "storms" && ranked[p.dataIndex]) onHoverSid(ranked[p.dataIndex].s.sid);
