@@ -7,15 +7,17 @@ import { chartTheme } from "../lib/palette";
 import { EChart } from "./EChart";
 
 /** What the run cost and how the allocation was shaped: humanized wall/core
- * time, per-storm cores and memory, and runtime/memory charts that toggle
- * between a binned distribution and every storm individually — the second
- * view is how you spot the one nine-hour outlier. */
+ * time, per-storm cores and memory, and runtime/memory charts showing every
+ * storm individually (how you spot the one nine-hour outlier), with a binned
+ * distribution as the alternate view. Hovering a storm's bar highlights the
+ * same storm in the sibling chart, so compute time and memory read together. */
 export function ResourcesCard({ manifest, stormUrl }: {
   manifest: RunManifest;
   stormUrl: (sid: string) => string;
 }) {
   const r = manifest.run;
   const storms = manifest.storms;
+  const [hoverSid, setHoverSid] = useState<string | null>(null);
 
   const stats = useMemo(() => {
     const mems = storms.map((s) => s.memory_mb).filter((v): v is number => v != null).sort((a, b) => a - b);
@@ -40,9 +42,22 @@ export function ResourcesCard({ manifest, stormUrl }: {
           <div className="detail">≈ {fmtHoursHuman(r.core_hours)} of one core</div>
         </div>
         <div className="tile">
-          <div className="label">Wall time</div>
-          <div className="value">{fmtHoursHuman(r.wall_hours)}</div>
-          <div className="detail">{r.wall_hours != null ? `${Math.round(r.wall_hours)} h across all jobs` : ""}</div>
+          <div className="label">Elapsed</div>
+          <div className="value">{fmtHoursHuman(r.elapsed_hours ?? undefined)}</div>
+          <div className="detail">
+            {r.elapsed_hours != null
+              ? "first task start to last task end"
+              : "needs Start/End in the sacct caches"}
+          </div>
+        </div>
+        <div className="tile">
+          <div className="label">Task time, summed</div>
+          <div className="value">{fmtHoursHuman(r.task_hours ?? r.wall_hours)}</div>
+          <div className="detail">
+            {(r.task_hours ?? r.wall_hours) != null
+              ? `${Math.round(r.task_hours ?? r.wall_hours ?? 0)} h summed over array tasks (~20 ran at a time)`
+              : ""}
+          </div>
         </div>
         <div className="tile">
           <div className="label">Cores per storm</div>
@@ -78,6 +93,8 @@ export function ResourcesCard({ manifest, stormUrl }: {
           ]}
           colorKey="series1"
           stormUrl={stormUrl}
+          hoverSid={hoverSid}
+          onHoverSid={setHoverSid}
         />
         <MetricChart
           title="Memory"
@@ -94,6 +111,8 @@ export function ResourcesCard({ manifest, stormUrl }: {
           ]}
           colorKey="series2"
           stormUrl={stormUrl}
+          hoverSid={hoverSid}
+          onHoverSid={setHoverSid}
         />
       </div>
     </div>
@@ -105,7 +124,7 @@ interface Bin {
   max: number;
 }
 
-function MetricChart({ title, storms, value, fmt, bins, colorKey, stormUrl }: {
+function MetricChart({ title, storms, value, fmt, bins, colorKey, stormUrl, hoverSid, onHoverSid }: {
   title: string;
   storms: StormRec[];
   value: (s: StormRec) => number | null;
@@ -113,8 +132,11 @@ function MetricChart({ title, storms, value, fmt, bins, colorKey, stormUrl }: {
   bins: Bin[];
   colorKey: "series1" | "series2";
   stormUrl: (sid: string) => string;
+  hoverSid: string | null;
+  onHoverSid: (sid: string | null) => void;
 }) {
-  const [mode, setMode] = useState<"bins" | "storms">("bins");
+  // per storm by default: the bins hide which storm is which
+  const [mode, setMode] = useState<"bins" | "storms">("storms");
   const navigate = useNavigate();
   const t = chartTheme();
   const color = t[colorKey];
@@ -172,9 +194,21 @@ function MetricChart({ title, storms, value, fmt, bins, colorKey, stormUrl }: {
         splitLine: { lineStyle: { color: t.grid } },
         axisLabel: { color: t.textMuted, fontSize: 11, formatter: (v: number) => fmt(v) },
       },
-      series: [{ type: "bar", name: title, data: ranked.map((x) => x.v), itemStyle: { color }, barCategoryGap: "10%" }],
+      series: [
+        {
+          type: "bar",
+          name: title,
+          // the storm hovered in either chart reads in primary ink in both,
+          // so compute time and memory line up for one storm at a glance
+          data: ranked.map((x) => ({
+            value: x.v,
+            itemStyle: x.s.sid === hoverSid ? { color: t.textPrimary } : { color },
+          })),
+          barCategoryGap: "10%",
+        },
+      ],
     };
-  }, [mode, ranked, bins, color, t, fmt, title]);
+  }, [mode, ranked, bins, color, t, fmt, title, hoverSid]);
 
   return (
     <div>
@@ -195,6 +229,10 @@ function MetricChart({ title, storms, value, fmt, bins, colorKey, stormUrl }: {
         onClick={(p) => {
           if (mode === "storms" && ranked[p.dataIndex]) navigate(stormUrl(ranked[p.dataIndex].s.sid));
         }}
+        onHover={(p) => {
+          if (mode === "storms" && ranked[p.dataIndex]) onHoverSid(ranked[p.dataIndex].s.sid);
+        }}
+        onHoverEnd={() => onHoverSid(null)}
       />
     </div>
   );

@@ -120,6 +120,12 @@ export interface RunManifest {
     n_coarse_only: number;
     n_outlier_flagged: number;
     core_hours: number;
+    /** sum of per-task Elapsed across every array, retries included */
+    task_hours?: number;
+    /** calendar span, first task start to last task end; absent when the
+     * sacct caches predate the Start/End columns */
+    elapsed_hours?: number;
+    /** deprecated: same value as task_hours, kept for older manifests */
     wall_hours?: number;
     wet_threshold_m?: number;
     outlier_threshold_m?: number;
