@@ -253,6 +253,11 @@ export function StormMap({ layers, multi, overlays, context, track, windowT, win
     [allPoints, floor],
   );
   const hidden = allPoints.length - points.length;
+  // the floor slider spans the layer's own values, so it can isolate the top
+  // of a layer whose whole range sits above the fixed presets (storm tide
+  // carries the astronomical tide, so nearly every bin clears 0.5 m)
+  const layerTop = useMemo(() => Math.max(0, ...allPoints.map((p) => Math.abs(p[2]))), [allPoints]);
+  const floorLabel = Number(floor.toFixed(2));
   const computedMax = useMemo(() => Math.max(0.1, ...points.map((p) => Math.abs(p[2]))), [points]);
   const scaleTop = active?.scaleMax ?? computedMax;
   const scaleMin = active?.diverging ? -scaleTop : 0;
@@ -728,6 +733,18 @@ export function StormMap({ layers, multi, overlays, context, track, windowT, win
                 </button>
               ))}
             </div>
+            <label className="floor-slider" title="hide gauges below this value">
+              <input
+                type="range"
+                min={0}
+                max={layerTop}
+                step="any"
+                value={Math.min(floor, layerTop)}
+                aria-label="minimum value shown"
+                onChange={(e) => setFloor(Number(e.target.value))}
+              />
+              <span>≥{floorLabel} m</span>
+            </label>
             {points.length > 0 && (
               <span className="sym-legend">
                 <span>{scaleMin < 0 ? `−${scaleTop.toFixed(1)}` : "0"}</span>
@@ -804,7 +821,7 @@ export function StormMap({ layers, multi, overlays, context, track, windowT, win
             active?.total != null && active.total > allPoints.length
               ? `showing the ${allPoints.length.toLocaleString()} highest of ${active.total.toLocaleString()} gauges`
               : null,
-            hidden > 0 ? `${hidden.toLocaleString()} below ${floor} m hidden` : null,
+            hidden > 0 ? `${hidden.toLocaleString()} below ${floorLabel} m hidden` : null,
             track && showTrack
               ? `dashed: observed track (vertices coloured by wind), solid: gauge window${windows?.length ? "s" : ""}`
               : null,

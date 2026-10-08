@@ -463,6 +463,21 @@ a:hover {
   font-size: 12px;
   color: var(--text-secondary);
 }
+.map-legend .floor-slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.map-legend .floor-slider input[type="range"] {
+  width: 140px;
+  accent-color: var(--accent);
+}
+.map-legend .floor-slider span {
+  /* wide enough for "≥22.65 m", so the slider does not shift while dragging */
+  min-width: 64px;
+}
 .map-legend .seg-group {
   flex: none;
 }
