@@ -52,6 +52,7 @@ export const geoclaw: ProjectView = {
     { key: "peak_surge_m", label: "Peak surge", num: true, render: (s) => fmtMeters(s.peak_surge_m) },
     { key: "peak_depth_m", label: "Peak depth", num: true, render: (s) => fmtMeters(s.peak_depth_m) },
     { key: "wet_gauges", label: "Wet gauges", num: true, render: (s) => fmtCount(s.wet_gauges) },
+    { key: "film_bins", label: "Thin-film bins", num: true, render: (s) => fmtCount(s.film_bins) },
     { key: "runtime_seconds", label: "Runtime", num: true, render: (s) => fmtRuntime(s.runtime_seconds) },
     { key: "memory_mb", label: "Memory", num: true, render: (s) => fmtMem(s.memory_mb) },
     { key: "n_retries", label: "Retries", num: true, render: (s) => fmtCount(s.n_retries) },
@@ -109,8 +110,16 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
 
   const notTriggered = storm.status === "not_triggered";
 
-  const mapLayers = useMemo<MapPointLayer[]>(
-    () => [
+  const mapLayers = useMemo<MapPointLayer[]>(() => {
+    const tide = detail?.storm_tide_points ?? [];
+    const noFilm = detail?.storm_tide_nofilm_points ?? [];
+    // Each storm-tide layer keeps its own scale. A shared one hid the films:
+    // without them the affected bins inherit the real flooding next to them,
+    // so both layers put those bins at the top of a shared ramp. On its own
+    // scale the first layer shows the films as the few dark bins they are.
+    const noFilmMax = noFilm.length ? Math.max(...noFilm.map((p) => p[2])) : undefined;
+    const tideMax = tide.length ? Math.max(...tide.map((p) => p[2])) : undefined;
+    return [
       {
         key: "surge",
         label: "surge",
@@ -127,9 +136,30 @@ function GeoclawStormBody({ projectId, runId, sid, manifest, storm }: StormBodyP
         ramp: ORANGE_RAMP,
         caption: "peak inundation depth, land gauges",
       },
-    ],
-    [detail, storm],
-  );
+      {
+        key: "storm_tide",
+        label: "storm tide",
+        points: tide,
+        ramp: BLUE_RAMP,
+        caption: [
+          "max storm tide per ATTOM bin from the post-processing, m above MSL; a bin near several tide stations shows the highest of its rows",
+          (storm.film_bins ?? 0) > 0 && tideMax != null && noFilmMax != null
+            ? `${fmtCount(storm.film_bins)} bins change when thin wet films are treated as dry; highest bin ${tideMax.toFixed(2)} m, ${noFilmMax.toFixed(2)} m without films`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      },
+      {
+        key: "storm_tide_nofilm",
+        label: "no thin films",
+        points: noFilm,
+        ramp: BLUE_RAMP,
+        caption:
+          "diagnostic: the same, with every hour treated as dry whose water stands on ground above the run's highest sea level (a film of a few cm the post-processing reads as a level equal to the ground)",
+      },
+    ];
+  }, [detail, storm]);
 
   // drawn under the surge dots rather than instead of them
   const mapOverlays = useMemo<MapPointLayer[]>(() => {

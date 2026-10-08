@@ -105,6 +105,12 @@ export interface StormRec {
   array_job?: string | null;
   array_index?: number | null;
   triggered?: number;
+  /** ATTOM bins whose max storm tide changes when the hours with water on
+   * ground above the run's highest sea level are treated as dry; written by
+   * assemble.py's storm_tide step */
+  film_bins?: number;
+  /** the largest such change, m */
+  film_bin_drop_max_m?: number;
 }
 
 export interface RunManifest {
@@ -144,6 +150,10 @@ export interface StormDetail {
   sid: string;
   wet_gauge_points?: GaugePoint[];
   surge_gauge_points?: GaugePoint[];
+  /** max storm tide per ATTOM bin, highest of its tide-station rows */
+  storm_tide_points?: GaugePoint[];
+  /** the same with those hours treated as dry (see film_bins) */
+  storm_tide_nofilm_points?: GaugePoint[];
   dry?: [number, number][];
   excluded?: [number, number][];
 }

@@ -12,6 +12,9 @@ restructures it for the web app:
   surge_gauge_points) are split out so the initial page load stays small.
 - ``<project>/runs/<run>/storms/<sid>.json.gz``  per-storm map payload: the
   point lists plus the dry/excluded background dots from gauges/<sid>.json.
+  The storm_tide step adds two more lists from coastal-core's storm-tide
+  post-processing (see assemble_storm_tide), and two per-storm scalars to the
+  slim manifest.
 - ``<project>/runs/<run>/anim/``  the run's mp4 pair per storm and index.json.
 - ``<project>/runs/<run>/params.json``  geoclaw_params_json lifted from each
   storm's compact NetCDF attributes (slow over the mount; incremental).
@@ -124,6 +127,74 @@ def assemble_storm_details(run: str, manifest: dict, report_dir: Path, out_dir: 
             detail.update(json.loads(gauge_path.read_text()))
         total += write_json_gz(storms_dir / f"{sid}.json.gz", detail)
     log(f"{run}: storm details {total / 1e6:.1f} MB gz")
+
+
+def assemble_storm_tide(run: str, manifest: dict, storm_tide_dir: Path, film_scan_dir: Path,
+                        out_dir: Path) -> None:
+    """Add coastal-core's storm-tide post-processing to the map payloads.
+
+    Two point lists per storm, one value per ATTOM building bin (gauge_kind
+    ``prop``), the exposure the dose is computed over:
+
+    - ``storm_tide_points``: ``max_storm_tide`` as scripts/compute_storm_tide.py
+      wrote it. A bin near several tide stations has one row per station, and
+      how to collapse them is still open, so the map shows the highest.
+    - ``storm_tide_nofilm_points``: the same with every hour that
+      scripts/storm_tide_film_scan.py flags P treated as dry. P is a wet cell
+      whose ground lies above the highest sea level of the whole run, typically
+      a centimetre or two of water that the post-processing reads as a water
+      level equal to the ground's height. A diagnostic, not a product.
+
+    Also writes per storm to the slim manifest ``film_bins`` (bins whose value
+    changes without P) and ``film_bin_drop_max_m`` (the largest such change).
+    It rewrites files the manifest and details steps wrote, so it runs after
+    them, and leaves storms the storm-tide catalogue does not cover untouched.
+    """
+    import pandas as pd
+
+    flagged = pd.read_parquet(
+        film_scan_dir / "flagged_rows.parquet",
+        columns=["sid", "geoclaw_id", "nearest_tide_loc", "noP"],
+    )
+    summary = pd.read_csv(film_scan_dir / "summary.csv", dtype={"sid": str}).set_index("sid")
+    storms_dir = out_dir / "storms"
+    total, n = 0, 0
+    for s in manifest["storms"]:
+        sid = s["sid"]
+        path, detail_path = storm_tide_dir / f"{sid}.parquet", storms_dir / f"{sid}.json.gz"
+        if not path.exists() or not detail_path.exists():
+            continue
+        rows = pd.read_parquet(path)
+        rows = rows[rows.gauge_kind == "prop"]
+        # The scan lists only the rows it flags or that move; every other row
+        # keeps its value when P hours are dry.
+        moved = flagged[flagged.sid == sid].set_index(["geoclaw_id", "nearest_tide_loc"]).noP
+        nofilm = moved.reindex(pd.MultiIndex.from_frame(rows[["geoclaw_id", "nearest_tide_loc"]])).values
+        rows = rows.assign(nofilm=np.where(np.isnan(nofilm), rows.max_storm_tide.values, nofilm))
+        bins = rows.groupby("geoclaw_id").agg(
+            lon=("lon", "first"), lat=("lat", "first"),
+            st=("max_storm_tide", "max"), nofilm=("nofilm", "max"),
+        )
+        detail = json.loads(gzip.decompress(detail_path.read_bytes()))
+        for key, col in (("storm_tide_points", "st"), ("storm_tide_nofilm_points", "nofilm")):
+            detail[key] = [
+                [round(b.lon, 3), round(b.lat, 3), round(getattr(b, col), 3), gid]
+                for gid, b in bins.iterrows()
+            ]
+        total += write_json_gz(detail_path, detail)
+        n += 1
+
+    slim_path = out_dir / "manifest.json"
+    slim = json.loads(slim_path.read_text())
+    for st in slim["storms"]:
+        r = summary.loc[st["sid"]] if st["sid"] in summary.index else None
+        # A storm the scan failed on carries an error and no counts; leave it out.
+        if r is None or pd.isna(r.get("noP_prop_bins_changed")):
+            continue
+        st["film_bins"] = int(r.noP_prop_bins_changed)
+        st["film_bin_drop_max_m"] = round(float(r.noP_prop_bin_drop_max_m), 3)
+    write_json(slim_path, slim)
+    log(f"{run}: storm tide for {n} storms, details now {total / 1e6:.1f} MB gz")
 
 
 def assemble_anim(run: str, anim_src: Path, out_dir: Path, sids: set[str]) -> None:
@@ -382,8 +453,12 @@ def main() -> int:
     p.add_argument("--anim-dir", help="dir holding <sid>.mp4 pairs and index.json for this run")
     p.add_argument("--compact", help="comma-separated compact dirs, lowest precedence first")
     p.add_argument("--steps", default="manifest,details,anim",
-                   help="comma list of: manifest,details,anim,params,tracks,series")
+                   help="comma list of: manifest,details,storm_tide,anim,params,tracks,series")
     p.add_argument("--series-sids", default="", help="comma list of sids for the series step")
+    p.add_argument("--storm-tide-dir",
+                   help="coastal-core storm-tide per_gauge/ parquets, for the storm_tide step")
+    p.add_argument("--film-scan-dir",
+                   help="coastal-core storm_tide_film_scan.py output dir, for the storm_tide step")
     p.add_argument("--force", action="store_true", help="recompute params already cached")
     args = p.parse_args()
 
@@ -408,6 +483,15 @@ def main() -> int:
         update_registry(args.run, manifest, catalogue_name, project_root, scope)
     if "details" in steps:
         assemble_storm_details(args.run, manifest, report_dir, out_dir)
+    if "storm_tide" in steps:
+        if not (args.storm_tide_dir and args.film_scan_dir):
+            p.error("--storm-tide-dir and --film-scan-dir are required for the storm_tide step")
+        assemble_storm_tide(
+            args.run, manifest,
+            Path(args.storm_tide_dir.replace("/project/cil", str(CIL))),
+            Path(args.film_scan_dir.replace("/project/cil", str(CIL))),
+            out_dir,
+        )
     if "anim" in steps:
         if not args.anim_dir:
             p.error("--anim-dir is required for the anim step")
